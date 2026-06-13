@@ -27,7 +27,8 @@ test('resolveVenvDirName reads venv dir from prior setup stage', () => {
     ),
   ];
   assert.equal(resolveVenvDirName(stages), 'venv');
-  assert.equal(resolveVenvPipInstallCommand(stages), 'venv/bin/python -m pip install pytest');
+  assert.match(resolveVenvPipInstallCommand(stages), /venv\/bin\/python -m pip install pytest/);
+  assert.match(resolveVenvPipInstallCommand(stages), /get-pip\.py/);
   assert.match(resolveVenvImportCheckCommand(stages), /^venv\/bin\/python -c/);
 });
 

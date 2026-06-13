@@ -5,6 +5,7 @@ import { planDeclaresConftest } from '../python-bootstrap/pythonStackDetect';
 import { planCompletenessMsg } from '../l10n/lintMsg';
 import { codeRunnerCommandOf, writeOutputToFileOf } from '../plan-completeness/planCompletenessStageAccess';
 import type { InfraChainIssue } from './InfraChainIssues';
+import { withVenvPipBootstrap } from './pythonVenvCommands';
 import {
   firstPythonInfraAnchorIndex,
   firstTestRunIndex,
@@ -142,9 +143,9 @@ export function usesRequirementsTxtForVenvPip(stages: readonly Stage[]): boolean
 export function resolveVenvPipInstallCommand(stages: readonly Stage[]): string {
   const py = resolveVenvPythonExecutable(stages);
   if (usesRequirementsTxtForVenvPip(stages)) {
-    return `${py} -m pip install -r requirements.txt`;
+    return withVenvPipBootstrap(py, 'pip install -r requirements.txt');
   }
-  return `${py} -m pip install pytest`;
+  return withVenvPipBootstrap(py, 'pip install pytest');
 }
 
 export function resolveVenvImportCheckCommand(stages: readonly Stage[]): string {

@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { CodeRunnerConfig } from '../WorkflowDefinition';
+import { VENV_CREATE_RESILIENT_COMMAND, withVenvPipBootstrap } from '../contract-infra/pythonVenvCommands';
 import { discoverPythonTestInfraOnDisk } from '../test-infra/pythonDiskScan';
 
 export function venvPythonExists(cwd: string): boolean {
@@ -10,7 +11,7 @@ export function venvPythonExists(cwd: string): boolean {
 export function buildVenvCreateRunnerConfig(cwd: string): CodeRunnerConfig {
   return {
     type: 'code-runner',
-    command: 'python3 -m venv .venv',
+    command: VENV_CREATE_RESILIENT_COMMAND,
     captureOutput: true,
     pathBase: 'workspace',
     workingDir: cwd === '.' ? '.' : cwd,
@@ -18,9 +19,8 @@ export function buildVenvCreateRunnerConfig(cwd: string): CodeRunnerConfig {
 }
 
 export function buildVenvPipRunnerConfig(cwd: string, useRequirements: boolean): CodeRunnerConfig {
-  const pipCmd = useRequirements
-    ? '.venv/bin/python -m pip install -r requirements.txt'
-    : '.venv/bin/python -m pip install pytest';
+  const pipTail = useRequirements ? 'pip install -r requirements.txt' : 'pip install pytest';
+  const pipCmd = withVenvPipBootstrap('.venv/bin/python', pipTail);
   return {
     type: 'code-runner',
     command: pipCmd,

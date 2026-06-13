@@ -8,6 +8,7 @@ import {
   testWriteStageIdFromSemanticName,
 } from '../workflow/StageIdPatterns';
 import { buildNodeExtensionScriptCommand } from '../contract-infra';
+import { VENV_CREATE_RESILIENT_COMMAND } from '../contract-infra/pythonVenvCommands';
 
 export function isBundleWriteStageId(stageId: string): boolean {
   return stageId.endsWith('_stagent_bundle_write');
@@ -202,8 +203,9 @@ export function buildVenvCreateStage(dependsOn: string[]): Stage {
   return codeRunnerStage({
     id: 'stage_venv_create',
     title: '创建 Python venv',
-    description: 'python3 -m venv .venv，供后续 pip / pytest 使用。',
-    command: 'python3 -m venv .venv',
+    description:
+      'python3 -m venv .venv（缺 python3-venv 时 fallback --without-pip），供后续 pip / pytest 使用。',
+    command: VENV_CREATE_RESILIENT_COMMAND,
     dependsOn,
   });
 }

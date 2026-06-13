@@ -198,6 +198,38 @@ test('buildIntegrationApiBridgePromptSuffix injects peer signatures for main（R
   assert.equal(buildIntegrationApiBridgePromptSuffix(wf, 'broker', root), undefined);
 });
 
+test('extractPublicPythonSignatures keeps type-annotated def params（Run #63）', () => {
+  const src = [
+    'class SimBroker:',
+    '    def __init__(self, cash: float = 100000.0):',
+    '        self.cash = cash',
+  ].join('\n');
+  const sigs = extractPublicPythonSignatures(src);
+  assert.ok(sigs.some((s) => s.includes('def __init__(self, cash: float = 100000.0):')));
+});
+
+test('buildIntegrationApiBridgePromptSuffix at main test_write sees broker impl on disk（Run #63）', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-main-testwrite-'));
+  fs.mkdirSync(path.join(root, 'broker'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'broker/__init__.py'),
+    'class SimBroker:\n    def __init__(self, cash: float = 100000.0):\n        self.cash = cash\n',
+  );
+  const wf: WorkflowDefinition = {
+    id: 'wf',
+    version: '2.0',
+    meta: baseMeta,
+    stages: [
+      llmStage('stage_impl_broker', 'broker/__init__.py'),
+      llmStage('stage_test_write_main', 'tests/test_main.py'),
+      llmStage('stage_impl_main', 'main.py'),
+    ],
+  };
+  const suffix = buildIntegrationApiBridgePromptSuffix(wf, 'main', root);
+  assert.ok(suffix?.includes('def __init__(self, cash: float = 100000.0):'));
+  assert.ok(suffix?.includes('禁止臆造参数'));
+});
+
 test('readTestRunFailureExcerpt prefers verifyOut over empty stdout', () => {
   const excerpt = readTestRunFailureExcerpt({
     stageId: 'stage_test_run_x',

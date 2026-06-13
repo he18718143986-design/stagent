@@ -300,10 +300,17 @@ export function extractPublicPythonSignatures(content: string): string[] {
         j++;
         sig += ' ' + lines[j]!.trim();
       }
-    }
-    const colon = sig.indexOf(':');
-    if (colon >= 0) {
-      sig = sig.slice(0, colon + 1);
+      const closeParen = sig.lastIndexOf(')');
+      const colon =
+        closeParen >= 0 ? sig.indexOf(':', closeParen) : sig.indexOf(':');
+      if (colon >= 0) {
+        sig = sig.slice(0, colon + 1);
+      }
+    } else {
+      const colon = sig.indexOf(':');
+      if (colon >= 0) {
+        sig = sig.slice(0, colon + 1);
+      }
     }
     out.push((isMethod ? '    ' : '') + sig);
   }

@@ -21,7 +21,7 @@ import {
   semanticFromFixIfFailedStageId,
   semanticFromRuntimeReplanImplFixStageId,
 } from '../runtime-replan/FixExhaustedRouter';
-import { isImplStageId, isTestWriteStageId, semanticNameFromImplStageId } from '../workflow/StageIdPatterns';
+import { isImplStageId, isTestWriteStageId, semanticNameFromImplStageId, semanticNameFromTestWriteStageId } from '../workflow/StageIdPatterns';
 import { collectWorkflowSliceOrder } from '../python-contract/ForwardSliceImportLint';
 import { buildFixRoutingPromptSuffix } from './llm-persist/fixRoutingPromptSuffix';
 import { resolveEffectiveRetryComment } from '../retry/FailureSnapshot';
@@ -124,6 +124,17 @@ export async function invokeLlmTextForStage(
       );
       if (crossPatchSuffix) {
         sys += `\n\n${crossPatchSuffix}`;
+      }
+      const testWriteSemantic = semanticNameFromTestWriteStageId(stage.id);
+      if (testWriteSemantic === 'main') {
+        const apiBridge = buildIntegrationApiBridgePromptSuffix(
+          ctx.instance.definition,
+          'main',
+          params.getWorkspaceRoot?.(),
+        );
+        if (apiBridge) {
+          sys += `\n\n${apiBridge}`;
+        }
       }
       const behaviorSuffix = buildBehaviorSpecPromptSuffix(
         ctx.instance.stageRuntimes,

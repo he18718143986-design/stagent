@@ -22,6 +22,7 @@ export {
   resolveVenvPipInstallCommand,
   resolveVenvPythonExecutable,
 } from './InfraChainDetector';
+export { VENV_CREATE_RESILIENT_COMMAND, withVenvPipBootstrap } from './pythonVenvCommands';
 export {
   buildNodeExtensionScriptCommand,
   resolveExtensionScriptPath,
