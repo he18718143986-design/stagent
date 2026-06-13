@@ -85,7 +85,12 @@ export function parseDecisionArtifactsFromText(
       return { artifacts: null, markdownBody, warnings };
     }
     if (options?.semantic) {
-      for (const v of validateBehaviorSpecForSemantic(options.semantic, parsed.behaviorSpec)) {
+      const mod = parsed.modules?.find((m) => m.name === options.semantic);
+      for (const v of validateBehaviorSpecForSemantic(
+        options.semantic,
+        parsed.behaviorSpec,
+        mod?.exports,
+      )) {
         warnings.push(v.message);
       }
     }

@@ -69,6 +69,7 @@ import {
 } from '../runtime-replan/constants';
 import { DECISION_ARTIFACTS_OUTPUT_KEY } from '../WorkflowOutputKeys';
 import { resolveSliceBehaviorSpec } from '../commitment/behaviorSpec';
+import { resolveSliceContractExports } from '../commitment/sliceContractExports';
 import {
   behaviorSpecIssuesToWarnings,
   hardBehaviorSpecIssues,
@@ -232,7 +233,9 @@ export const BUILTIN_POST_STAGE_GATES: QualityGate[] = [
       } catch {
         return null;
       }
-      const issues = lintTestAgainstBehaviorSpec(code, spec);
+      const issues = lintTestAgainstBehaviorSpec(code, spec, {
+        contractExports: resolveSliceContractExports(instance.definition, instance.stageRuntimes, semantic) ?? undefined,
+      });
       if (issues.length === 0) {
         return null;
       }

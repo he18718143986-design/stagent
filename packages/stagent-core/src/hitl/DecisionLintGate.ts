@@ -69,7 +69,13 @@ export function evaluateApproveBehaviorSpecOrReject(
     return true;
   }
   const artifacts = coerceDecisionArtifacts(decideOutputs[decisionArtifactsOutputKey]);
-  const violations = validateBehaviorSpecForSemantic(semantic, artifacts?.behaviorSpec);
+  const moduleExports =
+    artifacts?.modules?.find((m) => m.name === semantic)?.exports ?? undefined;
+  const violations = validateBehaviorSpecForSemantic(
+    semantic,
+    artifacts?.behaviorSpec,
+    moduleExports,
+  );
   if (violations.length === 0) {
     return true;
   }

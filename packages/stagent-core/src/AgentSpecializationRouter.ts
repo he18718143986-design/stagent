@@ -1,14 +1,41 @@
 import type { Stage } from './WorkflowDefinition';
 
-export type AgentRole = 'decision' | 'implementation' | 'test-write' | 'lightweight' | 'default';
+export type AgentRole =
+  | 'decision'
+  | 'implementation'
+  | 'test-write'
+  | 'integration'
+  | 'lightweight'
+  | 'default';
 
 export const AGENT_ROLES: readonly AgentRole[] = [
   'decision',
   'implementation',
   'test-write',
+  'integration',
   'lightweight',
   'default',
 ];
+
+/** 集成切片 semantic（main.py 把各模块粘合起来；T4 Run #62/#64 收敛墙）。 */
+export const INTEGRATION_SLICE_SEMANTIC = 'main';
+
+/**
+ * 集成切片（main）的 impl / fix / replan-fix / replan-testfix 阶段。
+ * test_write_main 仍归 'test-write'（已是出题人模型）；此处只圈实现/修复链。
+ * 组合后缀（如 `:gate-repair`）由 `(?::.*)?` 容忍——`:` 不在 semantic 字符集内。
+ */
+const INTEGRATION_STAGE_RE =
+  /^stage_(?:impl|fix_if_failed|runtime_replan_posttestfix_fix|runtime_replan_testfix|runtime_replan_fix)_([A-Za-z0-9_]+)(?::.*)?$/;
+
+export function integrationSliceSemanticFromStageId(stageId: string): string | undefined {
+  const m = INTEGRATION_STAGE_RE.exec(stageId);
+  return m?.[1];
+}
+
+export function isIntegrationSliceStageId(stageId: string): boolean {
+  return integrationSliceSemanticFromStageId(stageId) === INTEGRATION_SLICE_SEMANTIC;
+}
 
 export interface AgentSelectionConfig {
   preferredModelByRole?: Partial<Record<AgentRole, string>>;
@@ -33,6 +60,9 @@ export function classifyStageRoleFromId(stageId: string): AgentRole {
   }
   if (/^stage_test_write_/.test(stageId)) {
     return 'test-write';
+  }
+  if (isIntegrationSliceStageId(stageId)) {
+    return 'integration';
   }
   if (/^stage_impl_/.test(stageId)) {
     return 'implementation';

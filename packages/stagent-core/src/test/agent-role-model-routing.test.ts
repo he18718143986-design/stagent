@@ -29,6 +29,29 @@ test('classifyStageRoleFromId maps id prefixes to roles', () => {
   assert.equal(classifyStageRoleFromId('workflow_generation'), 'default');
 });
 
+test('classifyStageRoleFromId routes main integration impl/fix to integration role (Run #65)', () => {
+  // 集成切片 main：impl / fix / 三级 replan-fix → integration
+  assert.equal(classifyStageRoleFromId('stage_impl_main'), 'integration');
+  assert.equal(classifyStageRoleFromId('stage_fix_if_failed_main'), 'integration');
+  assert.equal(classifyStageRoleFromId('stage_runtime_replan_fix_main'), 'integration');
+  assert.equal(classifyStageRoleFromId('stage_runtime_replan_testfix_main'), 'integration');
+  assert.equal(classifyStageRoleFromId('stage_runtime_replan_posttestfix_fix_main'), 'integration');
+  // 组合后缀容忍
+  assert.equal(classifyStageRoleFromId('stage_fix_if_failed_main:gate-repair'), 'integration');
+  // 叶子切片不受影响：impl 仍 implementation，test_write_main 仍 test-write
+  assert.equal(classifyStageRoleFromId('stage_impl_indicators'), 'implementation');
+  assert.equal(classifyStageRoleFromId('stage_fix_if_failed_indicators'), 'default');
+  assert.equal(classifyStageRoleFromId('stage_test_write_main'), 'test-write');
+});
+
+test('modelFamilyHintForStageId resolves integration role override (Run #65)', () => {
+  const overrides = { integration: 'direct:pro' } as const;
+  assert.equal(modelFamilyHintForStageId('stage_impl_main', overrides), 'direct:pro');
+  assert.equal(modelFamilyHintForStageId('stage_fix_if_failed_main', overrides), 'direct:pro');
+  // 叶子 impl 不命中 integration
+  assert.equal(modelFamilyHintForStageId('stage_impl_indicators', overrides), undefined);
+});
+
 test('modelFamilyHintForStageId resolves only configured roles', () => {
   const overrides = { 'test-write': 'direct:glm-4' } as const;
   assert.equal(
@@ -120,6 +143,18 @@ test('invoker uses role model for test_write stage when configured', async () =>
   });
   assert.equal(await invoke('sys', 'user', 'stage_test_write_indicators'), 'from-test-writer');
   // impl 阶段不受影响，仍用全局模型
+  assert.equal(await invoke('sys', 'user', 'stage_impl_indicators'), 'from-main');
+});
+
+test('invoker routes main integration impl/fix to integration model (Run #65)', async () => {
+  const invoke = makeInvoker([MAIN, TESTW], {
+    llmApiKey: 'k',
+    llmModelByRole: { 'test-write': 'direct:test-writer', integration: 'direct:test-writer' },
+  });
+  // 集成切片 impl/fix → 出题人(强)模型
+  assert.equal(await invoke('sys', 'user', 'stage_impl_main'), 'from-test-writer');
+  assert.equal(await invoke('sys', 'user', 'stage_fix_if_failed_main'), 'from-test-writer');
+  // 叶子切片 impl 仍用全局 flash
   assert.equal(await invoke('sys', 'user', 'stage_impl_indicators'), 'from-main');
 });
 

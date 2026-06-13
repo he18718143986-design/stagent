@@ -26,6 +26,27 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** 测试是否覆盖 behaviorSpec 函数（含 Run #54 单入口 generate_signals("bear") 别名）。 */
+function functionAppearsCalledInTest(
+  fnName: string,
+  testCode: string,
+  contractExports?: string[],
+): boolean {
+  if (new RegExp(`\\b${escapeRegExp(fnName)}\\s*\\(`).test(testCode)) {
+    return true;
+  }
+  const hasUnified =
+    contractExports?.includes('generate_signals') || /\bgenerate_signals\s*\(/.test(testCode);
+  if (!hasUnified) {
+    return false;
+  }
+  const kind = fnName.replace(/^generate_/, '').replace(/_signal$/, '');
+  if (!kind) {
+    return false;
+  }
+  return new RegExp(`\\bgenerate_signals\\s*\\(\\s*["']${escapeRegExp(kind)}`, 'm').test(testCode);
+}
+
 /** 切出每个顶层 def 块（测试函数 / fixture helper），用于函数内顺序检查。 */
 function splitDefBlocks(code: string): Array<{ name: string; lines: string[] }> {
   const lines = code.split(/\r?\n/);
@@ -82,14 +103,23 @@ function lintSetIdealOrdering(code: string): BehaviorSpecLintIssue[] {
 
 /**
  * 用 behaviorSpec SSOT 复核测试文件：条件 id / 函数覆盖 + edge_rules 确定性纪律。
+ * contractExports 存在时，仅校验 exports 中声明的函数（与 module-contract 同源，Run #63）。
  */
 export function lintTestAgainstBehaviorSpec(
   testCode: string,
   spec: BehaviorSpecV1,
+  options?: { contractExports?: string[] },
 ): BehaviorSpecLintIssue[] {
+  const exportSet =
+    options?.contractExports?.length && options.contractExports.length > 0
+      ? new Set(options.contractExports)
+      : null;
+  const functions = exportSet
+    ? spec.functions.filter((fn) => exportSet.has(fn.name))
+    : spec.functions;
   const issues: BehaviorSpecLintIssue[] = [];
-  for (const fn of spec.functions) {
-    const fnCalled = new RegExp(`\\b${escapeRegExp(fn.name)}\\s*\\(`).test(testCode);
+  for (const fn of functions) {
+    const fnCalled = functionAppearsCalledInTest(fn.name, testCode, options?.contractExports);
     if (!fnCalled) {
       issues.push({
         code: 'behavior-spec-function-uncovered',

@@ -29,6 +29,6 @@ export const LLM_SETTINGS: SettingDomainEntry[] = [
   {
     key: 'agentRoleOverrides',
     defaultSummary: '{}',
-    effect: '按阶段角色分配模型（decision/implementation/test-write/lightweight）。',
+    effect: '按阶段角色分配模型（decision/implementation/integration/test-write/lightweight）。',
   },
 ];

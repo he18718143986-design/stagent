@@ -13,32 +13,109 @@
 
 ---
 
-## 运行 #62 — 2026-06-13（#61 export gate 切片 scope 修复后；进程中断后续跑）
+## 运行 #63 — 2026-06-13（全新工作区；signals behavior-spec 与契约 exports 冲突）
 
 | 字段 | 值 |
 |------|-----|
-| 耗时 | ~17min（**中断** @ broker test_write） |
-| headless 判定 | **中断**（非 FAIL；`--resume` 续跑） |
+| 耗时 | 491s |
+| headless 判定 | **FAIL** `behavior-spec-function-uncovered` @ `stage_test_write_signals` |
+| instance | `c46fe8a3-2e16-4b81-b291-950fc9028b03` |
+
+### RCA
+
+`test_write` 重试 2 次 gate 互相打架：
+1. **behavior-spec** 硬要求测试调用 `generate_long_signal()`
+2. **module-contract** 重试反馈：契约 exports 未声明 `generate_long_signal`（仅 `generate_signal` 等）
+3. 最终仍被 behavior-spec 阻断
+
+indicators 切片已完成；卡在 signals `test_write`。
+
+### 根治（Run #64 代码）
+
+| # | 机制 | 落点 |
+|---|------|------|
+| 1 | decide 硬拒：behaviorSpec.functions[].name 须在 modules.exports 中 | `validateBehaviorSpecForSemantic` + `DecisionLintGate` |
+| 2 | test_write gate 仅校验 **exports 内** 的 behaviorSpec 函数 | `lintTestAgainstBehaviorSpec({ contractExports })` + `postStageGates` |
+| 3 | 单入口 `generate_signals("bear")` 别名覆盖逻辑分组函数名 | `BehaviorSpecLint.functionAppearsCalledInTest`（Run #54 回归） |
+| - | 单测 Run #63 + #54 场景 | `behavior-spec.test.ts` · `behavior-spec-gate.test.ts` |
+
+**单测验收（2026-06-14）**：`behavior-spec*.test.js` **30/30 pass**（含 Run #54 别名、Run #63 exports 子集）；`rm -rf dist && npm run build` 后 dist 与源码对齐。
+
+---
+
+## 运行 #64 — 2026-06-14（#63 behaviorSpec↔exports 根治后；全新 live）
+
+| 字段 | 值 |
+|------|-----|
+| 命令 | `npm run build:core && npm run feedback:live:t4` |
+| 耗时 | ~1500s（trace 19:35:10→20:00:23） |
+| headless 判定 | **FAIL** `invariant-violation: test_run still failing after fix chain exhausted (blockDeliveryOnTestFailure)` @ `stage_fix_if_failed_main` |
+| instance | `bf15dd73-2b56-4cc6-9878-50bbaf7c2796` |
+
+### 里程碑（#63 根治验证 ✅）
+
+| 阶段 | 状态 |
+|------|------|
+| **signals test_write** | ✅ **不再被 behaviorSpec↔exports 互卡**（#63 根治生效） |
+| indicators / signals / risk / broker | ✅ test_run 绿 |
+| **main** | ❌ fix 链耗尽（`no-plan-or-budget`） |
+
+> 注：`artifacts/headless-feedback.json`（ts 19:13）为 **Run #63 残留**（function-uncovered），非 #64；#64 真实终态以 instance `bf15dd73` 的 `.wf-debug.log` 为准。
+
+### RCA（main 集成切片跨模块 API/符号漂移 — 与 #62 同类）
+
+main test_run 失败演变：`EEEEEEE`（setup 全错）→ testfix 重写 test_main.py → `..FFF..`（`test_main_engine_run_generates_long_order` 等 3 行为失败）→ posttestfix_fix → 最终 `pytest-symbol-missing: OrderResult`。
+
+1. **符号漂移**：`main.py` 某轮 `from broker import OrderResult`，broker 真实仅导出 `Order, OrderStatus, SimBroker, BrokerAdapter` → pytest 收集期 ImportError；fix 模型（deepseek-v4-flash）在 `compute`/`OrderResult` 间反复横跳不收敛。
+2. **dict 列名漂移**：`test_main.py` 消费 `'vol'`，`indicators` 产出 `'low'`（`cross-file-key-mismatch` 仅 warn）。
+3. **mock 掩盖集成**：`test_main.py` mock 掉 `indicators.compute`/`signals.generate_*`（`test-mocks-internal-module` warn），真实签名漂移延后到运行时才暴露。
+4. `buildIntegrationApiBridgePromptSuffix`（Run #57）虽已注入 test_write_main + impl_main，但为 prompt 建议、非硬门禁，LLM 仍臆造 `OrderResult`。
+
+### 根治（Run #65 代码）— 集成切片模型增强
+
+定性：非确定性引擎 bug，而是**异族出题人架构下 flash 在 main 集成切片的能力天花板**（多模块编排 + autospec mock + 跨文件键名，fix 链耗尽仍不收敛）。预算充足（fix×2 + 3 级 replan），故根治方向为**模型路由**而非加预算。
+
+| # | 机制 | 落点 |
+|---|------|------|
+| 1 | 新增 AgentRole `integration`；`stage_(impl\|fix_if_failed\|runtime_replan_{fix,testfix,posttestfix_fix})_main` → `integration` 角色 | `AgentSpecializationRouter.ts`（`classifyStageRoleFromId` + `isIntegrationSliceStageId`） |
+| 2 | headless 把 `integration` 角色路由到出题人(pro)模型（复用已注册 `llmExtraModels`）；叶子切片 impl/fix 仍用全局 flash | `scripts/headless/run.mjs` `llmModelByRole.integration` |
+| 3 | settings catalog 角色清单补 `integration` | `settings/catalog/llm.ts` |
+
+**策略**：叶子切片（indicators/signals/risk/broker）保持异族非对称（pro 出题 / flash 实现）——已稳定通过；仅最难的集成切片 main 的 impl/fix 升到 pro。`test_write_main` 本就走 `test-write`(pro)。
+
+**单测验收（2026-06-14）**：`agent-role-model-routing.test.js` **9/9 pass**（新增 integration 分类 / hint / invoker 路由 3 例）；`stagent-core` 全量 **902 pass / 0 fail**（2 skip）。
+
+---
+
+| 字段 | 值 |
+|------|-----|
+| 耗时 | 586s（resume 续跑含 generate 跳过） |
+| headless 判定 | **FAIL** `workflowFailed: terminated` @ `stage_test_run_main` |
 | instance | `2d3c7864-84af-4dda-b08b-039b99ae8fc9` |
 
 ### 里程碑
 
 | 阶段 | 状态 |
 |------|------|
-| indicators | ✅ test_run 绿 |
-| signals | ✅ test_run 绿 |
-| **risk** | ✅ **test_run 绿**（fix 1 次后通过；**#61 切片 scope 修复生效**） |
-| broker | ⏸ test_write 进行中（LLM 流式输出时进程被杀） |
+| indicators / signals / risk / broker | ✅ test_run 绿 |
+| **main** | ❌ fix 链 + runtime replan 预算耗尽（`no-plan-or-budget`） |
 
-### 验证
+### RCA
 
-- `stage_test_run_risk` 前置 export gate **仅扫** `tests/test_risk.py`，不再误拦 signals
-- risk 首次 impl 红 → fix 1 次 → 二次 test_run exit 0
+1. **main → indicators API 漂移**：`main.py` 调用 `calculate_ma(data)`，已落盘 `indicators` 签名要求 `(data, config)` → `TypeError: missing 1 required positional argument: 'config'`
+2. **抽象类误实例化**：`broker.BrokerAdapter()` 直接构造（抽象类）
+3. replan 已走 testfix + posttestfix_fix，仍红后 `fix-exhausted` 无预算 → `blockDeliveryOnTestFailure` 终止
 
-### 附带修复
+### 验证（#61 根治）
 
-- 补 `scripts/headless/lib/demo-delivery-acceptance.mjs`（Run #62 启动时缺模块）
-- Resume 续跑：`findResumableInstance` 跳过 generate；`writeOutputToFile` 非 string 时 disk-bootstrap 不再 `.trim()` 崩溃
+- `stage_test_run_risk` export gate 切片 scope ✅
+- risk fix 1 次后绿 ✅
+
+### 附带修复（引擎，已合入）
+
+- `demo-delivery-acceptance.mjs` 补全
+- `--resume`：`findResumableInstance` 跳过 generate
+- disk-bootstrap：`writeOutputToFile` 非 string 时不再 `.trim()` 崩溃
 
 ---
 

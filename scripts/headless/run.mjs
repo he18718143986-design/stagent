@@ -620,8 +620,16 @@ async function runFullJourney(ctx, spec) {
     trace.setPhase('platform')
     const liveOverrides = ctx.live ? buildLiveConfigOverrides(spec) : undefined
     // 异族出题人：第二模型注册 + llmModelByRole 配置注入（无 testWrite 时两者均为空，与历史等价）
+    // 异族出题人 + 集成切片增强（T4 Run #65）：test_write 用出题人(pro)；
+    // main 集成切片 impl/fix/replan-fix 同样路由到 pro（#62/#64 收敛墙，flash 在多模块编排不收敛）。
+    // 叶子切片 impl/fix 仍用全局 flash，保持异族非对称。
     const roleOverrides = llm.testWrite
-      ? { llmModelByRole: { 'test-write': `direct:${llm.testWrite.model}` } }
+      ? {
+          llmModelByRole: {
+            'test-write': `direct:${llm.testWrite.model}`,
+            integration: `direct:${llm.testWrite.model}`,
+          },
+        }
       : undefined
     const platform = createHeadlessPlatform({
       workspace: ws,

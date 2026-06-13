@@ -32,7 +32,8 @@ export interface BehaviorSpecViolation {
     | 'empty-functions'
     | 'empty-conditions'
     | 'duplicate-condition-id'
-    | 'invalid-when-non-null';
+    | 'invalid-when-non-null'
+    | 'function-not-in-exports';
   message: string;
 }
 
@@ -99,6 +100,7 @@ export function normalizeBehaviorSpec(spec: BehaviorSpecV1): BehaviorSpecV1 {
 export function validateBehaviorSpecForSemantic(
   semantic: string,
   behaviorSpec: unknown,
+  moduleExports?: string[],
 ): BehaviorSpecViolation[] {
   const required = (BEHAVIOR_SPEC_REQUIRED_SLICES as readonly string[]).includes(semantic);
   if (!behaviorSpec) {
@@ -152,6 +154,12 @@ export function validateBehaviorSpecForSemantic(
       violations.push({
         code: 'invalid-when-non-null',
         message: `behaviorSpec.functions.${fn.name}.when_non_null 须为 all 或 any`,
+      });
+    }
+    if (moduleExports?.length && !moduleExports.includes(fn.name)) {
+      violations.push({
+        code: 'function-not-in-exports',
+        message: `behaviorSpec 函数 ${fn.name} 未在 modules.exports 中声明（当前 exports: ${moduleExports.join(', ')}）`,
       });
     }
   }

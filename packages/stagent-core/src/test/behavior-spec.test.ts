@@ -8,6 +8,7 @@ import {
   BEHAVIOR_SPEC_SLICE_SUFFIX,
   parseDecisionArtifactsFromText,
 } from '../commitment';
+import { lintTestAgainstBehaviorSpec } from '../commitment/BehaviorSpecLint';
 import type { Stage } from '../WorkflowDefinition';
 import { DECISION_ARTIFACTS_OUTPUT_KEY } from '../WorkflowOutputKeys';
 
@@ -35,8 +36,53 @@ test('validateBehaviorSpecForSemantic requires spec for signals', () => {
 });
 
 test('validateBehaviorSpecForSemantic passes healthy signals spec', () => {
-  const violations = validateBehaviorSpecForSemantic('signals', SAMPLE_SPEC);
+  const violations = validateBehaviorSpecForSemantic('signals', SAMPLE_SPEC, [
+    'generate_bear_signal',
+  ]);
   assert.equal(violations.length, 0);
+});
+
+test('validateBehaviorSpecForSemantic rejects behaviorSpec function missing from exports（Run #63）', () => {
+  const spec = {
+    ...SAMPLE_SPEC,
+    functions: [
+      ...SAMPLE_SPEC.functions,
+      {
+        name: 'generate_long_signal',
+        returns: 'bool',
+        when_non_null: 'all' as const,
+        conditions: [{ id: 'ma_convergence', desc: 'x' }],
+      },
+    ],
+  };
+  const violations = validateBehaviorSpecForSemantic('signals', spec, ['generate_bear_signal']);
+  assert.ok(violations.some((v) => v.code === 'function-not-in-exports'));
+});
+
+test('lintTestAgainstBehaviorSpec skips functions not in contractExports（Run #63）', () => {
+  const spec = {
+    module: 'signals',
+    functions: [
+      {
+        name: 'generate_short_signal',
+        returns: 'bool',
+        when_non_null: 'all' as const,
+        conditions: [{ id: 'ma_convergence', desc: 'x' }],
+      },
+      {
+        name: 'generate_long_signal',
+        returns: 'bool',
+        when_non_null: 'all' as const,
+        conditions: [{ id: 'cci_second_cross_up', desc: 'y' }],
+      },
+    ],
+    edge_rules: [],
+  };
+  const testOnlyShort = 'from signals import generate_short_signal\ndef test_x():\n  # ma_convergence\n  generate_short_signal({}, {})\n';
+  const issues = lintTestAgainstBehaviorSpec(testOnlyShort, spec, {
+    contractExports: ['generate_short_signal', 'DataFrames'],
+  });
+  assert.equal(issues.length, 0);
 });
 
 test('validateBehaviorSpecForSemantic optional for non-required slice', () => {
