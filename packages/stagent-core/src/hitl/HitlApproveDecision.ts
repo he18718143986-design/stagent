@@ -92,7 +92,16 @@ export async function handleApproveDecision(
     const existing = isDecisionArtifactsV1(rt.outputs[DECISION_ARTIFACTS_OUTPUT_KEY])
       ? (rt.outputs[DECISION_ARTIFACTS_OUTPUT_KEY] as DecisionArtifactsV1)
       : null;
-    const synthesized = synthesizeSliceDecisionArtifacts(semantic, decisionRecord, existing);
+    const globalRt = instance.stageRuntimes.find((r) => r.stageId === GLOBAL_ARCHITECTURE_DECIDE_STAGE_ID);
+    const globalArtifacts = isDecisionArtifactsV1(globalRt?.outputs?.[DECISION_ARTIFACTS_OUTPUT_KEY])
+      ? (globalRt!.outputs![DECISION_ARTIFACTS_OUTPUT_KEY] as DecisionArtifactsV1)
+      : null;
+    const synthesized = synthesizeSliceDecisionArtifacts(
+      semantic,
+      decisionRecord,
+      existing,
+      globalArtifacts,
+    );
     if (synthesized) {
       rt.outputs[DECISION_ARTIFACTS_OUTPUT_KEY] = synthesized;
     }

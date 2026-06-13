@@ -1,4 +1,4 @@
-import { extractModuleExportsFromDecisionRecord, pruneExportNoise } from './decisionRecordExports';
+import { extractModuleExportsFromDecisionRecord, pruneExportNoise, shouldPreferGlobalOverSlice } from './decisionRecordExports';
 import type { BehaviorSpecV1 } from './behaviorSpecSchema';
 import { filterBlockedPipDependencies } from '../python-contract/blockedPipDependencies';
 
@@ -112,18 +112,30 @@ export function resolveModuleExports(
   sliceDecisionRecord?: string | null,
 ): string[] | null {
   const sliceEntry = normalizeModuleExports(sliceArtifacts?.modules).find((m) => m.name === semantic);
+  const globalEntry = normalizeModuleExports(globalArtifacts?.modules).find((m) => m.name === semantic);
+  const globalExports =
+    globalEntry && globalEntry.exports.length > 0
+      ? sanitizeModuleExports(semantic, globalEntry.exports)
+      : null;
+
   if (sliceEntry && sliceEntry.exports.length > 0) {
-    return sanitizeModuleExports(semantic, sliceEntry.exports);
+    const sliceExports = sanitizeModuleExports(semantic, sliceEntry.exports);
+    if (globalExports && shouldPreferGlobalOverSlice(sliceExports, globalExports)) {
+      return globalExports;
+    }
+    return sliceExports;
   }
   if (sliceDecisionRecord?.trim()) {
     const fromRecord = extractModuleExportsFromDecisionRecord(semantic, sliceDecisionRecord);
     if (fromRecord?.length) {
+      if (globalExports && shouldPreferGlobalOverSlice(fromRecord, globalExports)) {
+        return globalExports;
+      }
       return fromRecord;
     }
   }
-  const globalEntry = normalizeModuleExports(globalArtifacts?.modules).find((m) => m.name === semantic);
-  if (globalEntry && globalEntry.exports.length > 0) {
-    return sanitizeModuleExports(semantic, globalEntry.exports);
+  if (globalExports) {
+    return globalExports;
   }
   return null;
 }

@@ -19,7 +19,7 @@ import {
   fileOutputKeysForStage,
   isMultiFileBundleStage,
 } from './llm-persist/multiFileBundleOutput';
-import { isDecisionArtifactsV1 } from '../commitment/decisionArtifactsSchema';
+import { isDecisionArtifactsV1, type DecisionArtifactsV1 } from '../commitment/decisionArtifactsSchema';
 import { synthesizeSliceDecisionArtifacts } from '../commitment/decisionRecordExports';
 import { parseDecisionArtifactsFromText } from '../commitment/parseDecisionArtifacts';
 import {
@@ -72,7 +72,13 @@ export async function runLlmTextStage(
       const existing = isDecisionArtifactsV1(runtime.outputs[DECISION_ARTIFACTS_OUTPUT_KEY])
         ? runtime.outputs[DECISION_ARTIFACTS_OUTPUT_KEY]
         : null;
-      const synthesized = synthesizeSliceDecisionArtifacts(semantic, text, existing);
+      const globalRt = params.instance.stageRuntimes.find(
+        (r) => r.stageId === GLOBAL_ARCHITECTURE_DECIDE_STAGE_ID,
+      );
+      const globalArtifacts = isDecisionArtifactsV1(globalRt?.outputs?.[DECISION_ARTIFACTS_OUTPUT_KEY])
+        ? (globalRt!.outputs![DECISION_ARTIFACTS_OUTPUT_KEY] as DecisionArtifactsV1)
+        : null;
+      const synthesized = synthesizeSliceDecisionArtifacts(semantic, text, existing, globalArtifacts);
       if (synthesized) {
         runtime.outputs[DECISION_ARTIFACTS_OUTPUT_KEY] = synthesized;
       }

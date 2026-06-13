@@ -111,6 +111,7 @@ const BUILTIN_EXPORT_NOISE = new Set([
   'any',
   'optional',
   'union',
+  'len',
 ]);
 
 /** 异常类名（DecisionRecord 正文「抛出 KeyError」等），非模块 API。 */
@@ -266,6 +267,28 @@ export function isWeakModuleExports(exports: string[] | null | undefined): boole
   return exports.every((e) => isNoiseExportName(e));
 }
 
+/**
+ * 切片 decide 正文/合成 exports 为全局契约的真子集（或纯噪声）时，回退 global architecture SSOT。
+ * T4 Run #63：slice 仅合成 compute_moving_averages+len，test_write prompt 与 global 均为五函数。
+ */
+export function shouldPreferGlobalOverSlice(
+  sliceExports: string[] | null | undefined,
+  globalExports: string[] | null | undefined,
+): boolean {
+  const slice = pruneExportNoise(sliceExports ?? []);
+  const global = pruneExportNoise(globalExports ?? []);
+  if (global.length < 2 || slice.length === 0) {
+    return false;
+  }
+  if (isWeakModuleExports(slice)) {
+    return true;
+  }
+  if (slice.length >= global.length) {
+    return false;
+  }
+  return slice.every((s) => global.includes(s));
+}
+
 /** sidecar exports 全是 snake_case 但正文含 PascalCase API 类型 → 误合成（T4 Run #59）。 */
 function isMisleadingSidecarExports(
   exports: string[],
@@ -380,10 +403,12 @@ export function synthesizeSliceDecisionArtifacts(
   semantic: string,
   decisionRecord: string,
   existing?: DecisionArtifactsV1 | null,
+  globalArtifacts?: DecisionArtifactsV1 | null,
 ): DecisionArtifactsV1 | null {
   const fromRecord = extractModuleExportsFromDecisionRecord(semantic, decisionRecord);
   const rawExisting = rawModuleExportsForSemantic(existing?.modules, semantic);
   const existingEntry = moduleExportsForSemantic(existing?.modules, semantic);
+  const globalEntry = moduleExportsForSemantic(globalArtifacts?.modules, semantic);
   const sidecarNeedsSanitize =
     rawExisting != null &&
     existingEntry != null &&
@@ -425,5 +450,7 @@ export function synthesizeSliceDecisionArtifacts(
     !sidecarHasExportNoise(rawExisting)
       ? existingEntry
       : fromRecord;
-  return writeSanitizedModules(exports);
+  const resolvedExports =
+    globalEntry && shouldPreferGlobalOverSlice(exports, globalEntry) ? globalEntry : exports;
+  return writeSanitizedModules(resolvedExports ?? []);
 }

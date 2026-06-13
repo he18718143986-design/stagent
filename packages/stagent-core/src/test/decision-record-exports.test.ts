@@ -4,6 +4,7 @@ import { resolveModuleExports, sanitizeModuleExports } from '../commitment/decis
 import {
   extractModuleExportsFromDecisionRecord,
   pruneExportNoise,
+  shouldPreferGlobalOverSlice,
   synthesizeSliceDecisionArtifacts,
 } from '../commitment/decisionRecordExports';
 
@@ -202,4 +203,65 @@ test('synthesizeSliceDecisionArtifacts prunes column-only polluted sidecar（Run
     'compute_macd',
     'compute_vol',
   ]);
+});
+
+const RUN63_INDICATORS_RECORD = `### 职责边界
+本模块为南华期货自动下单系统提供纯技术指标计算能力。每个公开函数独立计算一个指标，\`compute_moving_averages\` 返回dict。备选方案是提供聚合式 \`compute_all\` 函数。
+### ★ 边界压力测试
+- 当输入数据长度小于最大计算周期（如89）时，本设计的行为是：改为在\`if len(data) < period\`时返回None。`;
+
+const RUN63_GLOBAL_INDICATORS = {
+  version: 1 as const,
+  files: [],
+  modules: [
+    {
+      name: 'indicators',
+      exports: [
+        'compute_moving_averages',
+        'compute_bollinger',
+        'compute_volume',
+        'compute_macd',
+        'compute_cci',
+      ],
+    },
+  ],
+};
+
+test('pruneExportNoise strips len builtin from prose scan（Run #63）', () => {
+  assert.deepEqual(pruneExportNoise(['compute_moving_averages', 'len']), ['compute_moving_averages']);
+});
+
+test('shouldPreferGlobalOverSlice when slice is incomplete subset of global（Run #63）', () => {
+  assert.equal(
+    shouldPreferGlobalOverSlice(
+      ['compute_moving_averages', 'len'],
+      RUN63_GLOBAL_INDICATORS.modules![0]!.exports,
+    ),
+    true,
+  );
+  assert.equal(shouldPreferGlobalOverSlice(['compute'], ['SignalGenerator']), false);
+});
+
+test('resolveModuleExports falls back to global when slice synthesized incomplete exports（Run #63）', () => {
+  const sliceArtifacts = {
+    version: 1 as const,
+    files: [],
+    modules: [{ name: 'indicators', exports: ['compute_moving_averages', 'len'] }],
+  };
+  const expected = [...RUN63_GLOBAL_INDICATORS.modules![0]!.exports].sort();
+  assert.deepEqual(
+    resolveModuleExports('indicators', sliceArtifacts, RUN63_GLOBAL_INDICATORS)?.sort(),
+    expected,
+  );
+});
+
+test('synthesizeSliceDecisionArtifacts prefers global when decide body omits sidecar（Run #63）', () => {
+  const artifacts = synthesizeSliceDecisionArtifacts(
+    'indicators',
+    RUN63_INDICATORS_RECORD,
+    null,
+    RUN63_GLOBAL_INDICATORS,
+  );
+  const expected = [...RUN63_GLOBAL_INDICATORS.modules![0]!.exports].sort();
+  assert.deepEqual(artifacts?.modules?.[0]?.exports?.sort(), expected);
 });
