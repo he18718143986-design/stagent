@@ -1,0 +1,29 @@
+# 全局配置
+bootstrap:
+  data_source: mock_csv  # mock | csv_path
+  initial_cash: 1000000
+  commission: 0.0001
+
+indicators:
+  ma_periods: [5,6,7,8,9,11,20]
+  boll_period: 20
+  boll_std: 2
+  vol_ma: 3
+  vol_threshold: 100
+  macd_fast: 14
+  macd_slow: 53
+  macd_signal: 60
+  cci_period: 89
+
+signals:
+  convergence_max_pt: 2.0
+  min_window_minutes: 3
+  index_refs: ["000001.SH","399001.SZ"]
+
+risk:
+  stop_loss_pts: 15.0
+  hedge_separation: true
+
+broker:
+  simulated: true
+  account_id: "sim001"
