@@ -23,6 +23,48 @@ test('恒真断言 → test-tautological-assertion', () => {
   assert.ok(issues.some((i) => i.type === 'test-tautological-assertion'));
 });
 
+test('自遮蔽调用 expected_cci = expected_cci(...) → test-self-shadowed-call (hard, Run #68/#69)', () => {
+  const code = `import numpy as np
+from indicators import compute
+
+def test_cci_known_values(sample_long_df, standard_config):
+    result = compute(sample_long_df, standard_config)
+    expected_cci = expected_cci(sample_long_df, window=89)
+    assert np.allclose(result['CCI'].dropna(), expected_cci)
+`;
+  const issues = lintTestQuality(code);
+  const hit = issues.find((i) => i.type === 'test-self-shadowed-call');
+  assert.ok(hit, 'should flag self-shadowed call');
+  assert.equal(hit?.hard, true);
+});
+
+test('合法重赋值/已定义同名不误报 self-shadowed-call', () => {
+  // def 定义的辅助函数：x = x(...) 合法
+  const okDef = `from indicators import compute
+
+def expected_cci(df, window):
+    return df['close'].rolling(window).mean()
+
+def test_cci(sample_long_df):
+    result = compute(sample_long_df, {'cci': {'window': 89}})
+    expected_cci_val = expected_cci(sample_long_df, 89)
+    assert result is not None and expected_cci_val is not None
+`;
+  assert.equal(
+    lintTestQuality(okDef).some((i) => i.type === 'test-self-shadowed-call'),
+    false,
+  );
+  // 参数同名：def f(parser): parser = parser(...) 合法（parser 是参数绑定）
+  const okParam = `def test_build(parser):
+    parser = parser(prog='x')
+    assert parser is not None
+`;
+  assert.equal(
+    lintTestQuality(okParam).some((i) => i.type === 'test-self-shadowed-call'),
+    false,
+  );
+});
+
 test('仅断言对象存在 → test-tests-implementation', () => {
   const code = `import mymod
 

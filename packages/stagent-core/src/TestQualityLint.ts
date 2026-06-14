@@ -17,7 +17,8 @@ export type TestQualityWarningType =
   | 'test-inline-impl-double'
   | 'test-mocks-internal-module'
   | 'test-sys-modules-hijack'
-  | 'test-brittle-assertion';
+  | 'test-brittle-assertion'
+  | 'test-self-shadowed-call';
 
 export interface TestQualityIssue {
   type: TestQualityWarningType;
@@ -116,6 +117,46 @@ export function lintBrittleAssertions(testCode: string): TestQualityIssue[] {
     issues.push({
       type: 'test-brittle-assertion',
       detail: '匹配内置异常消息原文（pytest.raises(..., match=…)）随 Python 版本变化；应去掉 match 或断言自定义异常',
+      hard: true,
+    });
+  }
+  return issues;
+}
+
+// 自遮蔽调用（T4 Run #68/#69 假红根因）：`name = name(...)` —— name 被赋值即成为函数局部，
+// RHS 调用自身会抛 UnboundLocalError（疑似本应调用同名辅助函数，却被结果赋值覆盖）。
+// 正确实现也无法通过，且 fix 链只改 impl 不可救，必须在 test_write 落盘前拦截 → 重写测试。
+const SELF_SHADOWED_CALL_RE = /^[ \t]*([A-Za-z_]\w*)\s*=\s*\1\s*\(/gm;
+
+/** 自遮蔽调用 `x = x(...)` 且 x 未在别处定义（def/import/参数）→ hard。 */
+export function lintSelfShadowedCall(testCode: string): TestQualityIssue[] {
+  const issues: TestQualityIssue[] = [];
+  const code = testCode ?? '';
+  if (!code.trim() || !looksLikeTest(code)) {
+    return issues;
+  }
+  const reported = new Set<string>();
+  for (const m of code.matchAll(SELF_SHADOWED_CALL_RE)) {
+    const name = m[1];
+    if (!name || reported.has(name)) {
+      continue;
+    }
+    // 注意：模块级 `def name`/`import name` 并不能让 `name = name(...)` 安全——函数内一旦
+    // 赋值，name 即全程视为局部，仍 UnboundLocalError。真正安全的只有：
+    //   ① name 是所在函数的参数；② 同函数更早已绑定 name；③ 显式 global/nonlocal name。
+    const isParam = new RegExp(String.raw`\bdef\s+\w+\s*\([^)]*\b${name}\b`).test(code);
+    const declaredGlobal = new RegExp(String.raw`\b(?:global|nonlocal)\s+[^\n]*\b${name}\b`).test(
+      code,
+    );
+    const before = code.slice(0, m.index ?? 0);
+    const assignedEarlier = new RegExp(String.raw`^[ \t]*${name}\s*=(?!=)`, 'm').test(before);
+    if (isParam || declaredGlobal || assignedEarlier) {
+      continue;
+    }
+    reported.add(name);
+    issues.push({
+      type: 'test-self-shadowed-call',
+      detail: `测试中 \`${name} = ${name}(...)\` 自遮蔽局部变量：调用自身将抛 UnboundLocalError（疑似本应调用同名辅助函数但被结果赋值覆盖）。impl 无法修复，须重写测试为调用真实被测 API 或重命名辅助。`,
       hard: true,
     });
   }
@@ -222,6 +263,7 @@ export function lintTestQuality(testCode: string): TestQualityIssue[] {
   issues.push(...lintInternalModuleMocks(code));
   issues.push(...lintSysModulesHijack(code));
   issues.push(...lintBrittleAssertions(code));
+  issues.push(...lintSelfShadowedCall(code));
 
   return issues;
 }

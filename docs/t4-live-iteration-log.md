@@ -13,6 +13,23 @@
 
 ---
 
+## 离线根治 — 2026-06-14（架构评估结论 + 复发性假红测试 SSOT · 零 API）
+
+> **架构是否重写？否。** 证据（#66–#69）符合健康架构特征「失败单调前移、越来越具体」：缺陷均为局部、确定性、可 gate/SSOT/retry 收敛的点，或外部阻断（402）；主干（DAG + Plan Compiler + Gate/SSOT + fix/replan + 异族出题人 + integration 路由）已产出过完整 strict 交付（#66）。应重估的是**验收纪律**——按「先离线根治、再 Live 复验」收敛复发点，而非重写架构（与 2026-06-13 决策记录一致）。
+
+### 复发点根治：test_write 自遮蔽假红（run5/run6 indicators 反复红的成因之一）
+
+run5/run6 indicators `test_run` 反复红，其中 `test_cci_known_values` 含 `expected_cci = expected_cci(...)`：name 被赋值即全程视为函数局部，RHS 调用自身抛 `UnboundLocalError`。这是 **test_write 产出的结构性坏测试**，fix 链只改 impl **永远修不好**，只有重写测试可救。
+
+| # | 机制 | 落点 |
+|---|------|------|
+| 1 | `TestQualityLint` 新增 `test-self-shadowed-call`（hard）：`name = name(...)` 且 name 非参数/非更早绑定/非 global → UnboundLocalError 假红 → post test_write 硬阻断触发同 stage 重写（P1）/testfix | `TestQualityLint.ts` |
+| - | 单测：`test-quality-lint.test.ts` 命中 + 参数/重赋值不误报；`@stagent/core` **915 pass** |
+
+> 说明：模块级 `def name`/`import name` **不**使其安全（函数内赋值即遮蔽），故 guard 仅认参数 / 同函数更早赋值 / global，避免假阴同时杜绝假阳。
+
+---
+
 ## 运行 #69 — 2026-06-14（稳定性轮次 run6：indicators 测试链中途 API 余额耗尽 402 ❌ · 非代码缺陷）
 
 | 字段 | 值 |
