@@ -645,9 +645,14 @@ async function runFullJourney(ctx, spec) {
     // 异族出题人 + 集成切片增强（T4 Run #65）：test_write 用出题人(pro)；
     // main 集成切片 impl/fix/replan-fix 同样路由到 pro（#62/#64 收敛墙，flash 在多模块编排不收敛）。
     // 叶子切片 impl/fix 仍用全局 flash，保持异族非对称。
+    // decision 角色也路由到出题人(pro)：decide 阶段产出结构化决策契约（I-17 四节 +
+    // behaviorSpec + configContent + modules[]），flash 偶发漏节/漏 spec/漏 config（#66A/#70/
+    // run8 同源），是 decide 类失败的共因；pro 在结构化决策上稳定得多。decide 阶段少（全局
+    // 架构 + 各切片），成本可控。叶子 impl/fix 仍用全局 flash，保持异族非对称。
     const roleOverrides = llm.testWrite
       ? {
           llmModelByRole: {
+            decision: `direct:${llm.testWrite.model}`,
             'test-write': `direct:${llm.testWrite.model}`,
             integration: `direct:${llm.testWrite.model}`,
           },

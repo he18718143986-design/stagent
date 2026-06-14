@@ -13,6 +13,33 @@
 
 ---
 
+## 运行 #71 — 2026-06-14（稳定性轮次 run8：arch-config gate 早拦生效 ✅，broker decide I-17 缺节耗尽 ❌）
+
+| 字段 | 值 |
+|------|-----|
+| 命令 | `feedback:live:t4`（全新工作区 `/tmp/t4-acc/run8`，无 `--resume`） |
+| 耗时 | 1733.2s（24 calls） |
+| headless 判定 | **FAIL** `decision lint rejected after 2 retries @ stage_decide_broker`（缺 I-17 ### 关键设计决策/边界压力测试/AI 无法验证的假设） |
+
+### 里程碑（#70 验证 ✅）
+
+- `+138s` 全局架构决策被 **`[decisionLintRejected:arch-config]`** 早拦 → AFK 即时重试补 configContent → 继续推进（**#70 根治端到端生效**，不再到交付前才空内容团灭）。
+- 推进到 broker decide。
+
+### RCA（decide 类失败共因：flash 产结构化决策不稳）
+
+`stage_decide_broker` 连续 3 次（初 + 2 重试）缺 I-17 必需章节，content-lint 正确拒绝、AFK 正确重试（#66A 生效），但 **flash 反复漏节** → 耗尽。复盘 #66A(behaviorSpec 漏)/#70(configContent 漏)/本轮(I-17 漏)**同源**：decide 阶段要产结构化决策契约，flash 偶发不完整。
+
+### 根治（Run #71 · 模型路由，对齐 #65 异族出题人）
+
+| # | 机制 | 落点 |
+|---|------|------|
+| 1 | `decision` 角色路由到出题人(pro)：decide 阶段（全局架构 + 各切片）用 pro 产 I-17 四节 + behaviorSpec + configContent + modules[]；叶子 impl/fix 仍用全局 flash | `scripts/headless/run.mjs` `llmModelByRole.decision` |
+
+> 引擎侧三道 decide 硬校验（content-lint #66A / behaviorSpec / arch-config #70）作为安全网仍在；pro 提升首过率，gate+AFK 兜底重试。连续 strict 计数：#66 ✅ → #67–#71 ❌（均已根因落码；根治后重启连击）。
+
+---
+
 ## 运行 #70 — 2026-06-14（稳定性轮次 run7：全切片绿、交付前 config.yaml 空内容失败 ❌ · 史上最深）
 
 | 字段 | 值 |
