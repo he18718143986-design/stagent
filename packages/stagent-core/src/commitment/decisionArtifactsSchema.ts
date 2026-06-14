@@ -1,6 +1,7 @@
 import { extractModuleExportsFromDecisionRecord, pruneExportNoise } from './decisionRecordExports';
 import type { BehaviorSpecV1 } from './behaviorSpecSchema';
 import { filterBlockedPipDependencies } from '../python-contract/blockedPipDependencies';
+import { isPythonStdlibRoot } from '../python-contract/pythonStdlibRoots';
 
 export interface DecisionArtifactFileV1 {
   key: string;
@@ -178,7 +179,9 @@ export function collectDeclaredDependenciesFromInstance(
       merged.add(dep);
     }
   }
-  return filterBlockedPipDependencies(merged);
+  // 标准库模块（csv/json/datetime/dataclasses/enum…）不是 pip 包，模型常误列为依赖 →
+  // 写入 requirements.txt 后 pip install 失败（T6 run8：`csv`）。stdlib 一律剔除。
+  return filterBlockedPipDependencies(merged).filter((dep) => !isPythonStdlibRoot(dep));
 }
 
 /** import 根名别名（如 yaml）→ 排除；仅保留可 pip install 的包名。 */
@@ -189,7 +192,7 @@ export function toPipInstallableDependencies(deps: Iterable<string>): string[] {
   const out = new Set<string>();
   for (const dep of deps) {
     const pkg = dep.trim().toLowerCase();
-    if (!pkg || aliasImportRoots.has(pkg)) {
+    if (!pkg || aliasImportRoots.has(pkg) || isPythonStdlibRoot(pkg)) {
       continue;
     }
     out.add(pkg);
