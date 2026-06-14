@@ -65,17 +65,15 @@ run9：49 stages · 25 calls · ~14.7min；交付 config.yaml + models/store/sta
 
 ### 连续 strict 批跑（`feedback:live:t6:batch` · --repeat 3）
 
-首批（commit 0a6356d，run9 之后、main-entry 修复之前）**0/3**，三例失败正好把「确定性引擎缺陷」与「模型方差」彻底分离：
+| 批次 | 代码 | 结果 | 说明 |
+|------|------|------|------|
+| batch1 | 0a6356d（main-entry 修复前） | strict **0/3** | run1 main-entry（已修）/ run2 decide 内容方差 / run3 decide 契约合成漏列 |
+| batch2 | 9 fixes（builtins 前） | strict **1/3** ✅ | **run2 第二次干净 strict 通过**；run1 `import builtins`（已修）/ run3 store 契约含内建 `max`（已修） |
+| batch3 | 10 fixes | strict **0/3** | run1 `verify_imports_main`；run2 main 契约含 `import_tasks_from_csv`（已修）/ run3 main 契约含模块名 `store`（已修） |
 
-| run | 失败 | 性质 |
-|-----|------|------|
-| 1 | `test_main.py from main import main` 未在契约 | **确定性引擎缺陷** → 已修（main 约定入口符号测试导入放行，与 export-extra 对称） |
-| 2 | `decide_models` 4 次重试仍缺「AI 无法验证的假设」节 / 边界场景<2 | **模型方差**（decide 结构化内容 rigor，I-17/18/19 硬门禁 × 简单切片难凑 2 个边界场景） |
-| 3 | `test_pipeline.py from pipeline import import_tasks_from_csv` 未在契约 | **模型方差**（decide 契约合成漏列真实函数名；测试由出题人 pro 写出真实 API，契约 prose 未捕获） |
+> **累计 2 次干净 strict 通过**（run9 + batch2-run2）。每批残留失败要么是**新照出的确定性引擎缺陷**（逐个根治），要么是 **decide 阶段模型输出方差**——内容 rigor 不稳（I-17/18/19 简单切片难凑 2 个边界场景）+ 契约合成噪声（尤以**集成切片 main** 为甚：decide 反复把下游函数名/模块名/内建塞进 main 契约）。每轮 6 个决策各有失败概率、按轮复合 → 连续 strict 成功率被 decide 方差压低。
 
-> **关键结论**：修掉 7 处确定性引擎缺陷后，批跑残留失败**全部是 decide 阶段的模型输出方差**（内容 rigor 不稳 + 契约合成不全），经多道**严格契约硬门禁**放大；每轮 6 个决策（架构 + 5 切片）各有失败概率、按轮复合 → 连续 strict 成功率被 decide 方差压低。这与原分析「剩余瓶颈 = 结构化决策的模型能力/方差，而非引擎」完全一致：**架构健康（run9 证），不重写；下一步是降低 decide 方差（提示/采样/门禁分级），而非改主干**。
-
-### 本轮根治的 7 处确定性引擎缺陷（均带单测；`@stagent/core` 932 pass）
+### 本轮根治的 10 处确定性引擎缺陷（均带单测；`@stagent/core` 935 pass）
 
 1. 入口切片 `main` 恒排末位（`orderEntrySliceLast`）——非 T4 模块名时 LLM 把 main 列首致先跑团灭。
 2. test-quality lint 生产模块名参数化——解耦 T4 硬编码 `indicators/signals/risk/broker`。
@@ -84,8 +82,17 @@ run9：49 stages · 25 calls · ~14.7min；交付 config.yaml + models/store/sta
 5. from-import re-export 计入可导入表面（`extractImportedNames`）——修集成切片 `from pipeline import …` 转出。
 6. 标准库模块名（csv/json/…）不得作为 pip 依赖——修 requirements 含 csv 致 pip 失败。
 7. 测试导入 main 约定入口符号即使契约漏声明也放行——与 export-extra 对称。
+8. `PYTHON_STDLIB_ROOTS` 补 builtins/operator/textwrap 等——修 `import builtins` 被判未声明依赖。
+9. Python 内建函数（max/len/sorted…）不得作为契约 export 噪声——修 store 契约含 `max` 团灭。
+10. 集成切片 main 豁免导出下游切片符号/模块名（`crossSliceExports`）——修 main 契约被 decide 塞 `import_tasks_from_csv`/`store` 团灭。
 
-> 这 7 处全是 **T4 量化任务恰好没触发的耦合/检测盲区**（T4 切片只导出 def/class、不含模块常量/re-export/stdlib 误列、模块名恰好命中硬编码表）。确定性平台任务把它们一次性照出来——正是 D3「用确定性多切片任务做平台及格线」的预期价值：**它既验证了架构健康，也补齐了平台对非量化任务的鲁棒性**。
+> 外加 1 处 AFK 鲁棒性调参：decide lint 重试预算 2→4。这 10 处全是 **T4 量化任务恰好没触发的耦合/检测盲区**（T4 切片只导出 def/class、不含模块常量/re-export/stdlib/内建误列、模块名恰好命中硬编码表、main 契约恰好干净）。确定性平台任务把它们一次性照出——正是 D3 的预期价值。
+
+### 总判定
+
+- **架构健康，不重写**：引擎能把数据管道/CRUD/状态机多切片任务推到 **strict 通过（已 2 次）**。D2/D3 的「平台正确性 vs 量化语义」拆分判据成立。
+- **平台对非量化任务的鲁棒性已显著补齐**（10 处根治），且**残余瓶颈被精确定位**：decide 阶段结构化输出的**模型方差**（内容 rigor + 契约合成噪声，尤以集成切片为甚），而非主干架构——与 T4 signals/broker「量化语义模型收敛」同源，均属**模型层**。
+- **下一步（非本 PR）**：降低 decide 方差应走「提示/采样/门禁分级」（如对集成切片放宽 export 契约硬度、对简单切片放宽 I-18 场景数），而非改主干 DAG/Plan-Compiler。
 
 ---
 
