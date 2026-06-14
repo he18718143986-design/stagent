@@ -12,7 +12,7 @@ import {
   GREENFIELD_PYTHON_SKELETON_VERSION,
   SKELETON_PROMPT_PLACEHOLDER_PREFIX,
 } from './constants';
-import { extractPythonSliceModules } from './extractPythonSliceModules';
+import { extractPythonSliceModules, orderEntrySliceLast } from './extractPythonSliceModules';
 import { applySemanticFillToSkeleton } from './applySemanticFillToSkeleton';
 import { sanitizeSemanticFillWorkflow } from './sanitizeSemanticFillPrompts';
 import {
@@ -198,10 +198,13 @@ export function expandGreenfieldPythonSkeleton(
   input: ExpandGreenfieldPythonSkeletonInput,
 ): ExpandGreenfieldPythonSkeletonResult {
   const taskType = input.taskType ?? 'software';
-  const modules =
+  // 入口切片（main）恒排末位：集成切片须在依赖切片之后实现/验证（forward-slice import）。
+  // input.modules 来自 LLM 架构决策时可能把 main 列在前，此处做确定性兜底重排。
+  const modules = orderEntrySliceLast(
     input.modules && input.modules.length > 0
       ? input.modules
-      : extractPythonSliceModules(input.userInput, taskType);
+      : extractPythonSliceModules(input.userInput, taskType),
+  );
 
   if (modules.length < 4) {
     throw new Error(

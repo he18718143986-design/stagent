@@ -132,6 +132,44 @@ def test_hedge():
   assert.ok(issues.some((i) => i.type === 'test-no-production-import'));
 });
 
+test('productionModules 参数化：非 T4 切片名（T6 models）不被误判为内联 Test Double', () => {
+  // 测试 import 了真实切片 models，但同时定义了内联辅助类 FakeClock。
+  const code = `from models import validate_task
+
+class FakeClock:
+    pass
+
+def test_validate():
+    assert validate_task({'title': 'x', 'status': 'todo', 'priority': 3}) == []
+`;
+  // 默认 T4 模块表里没有 models → 误判「未 import 生产模块」（旧行为，量化任务专属）。
+  const withDefault = lintTestQuality(code);
+  assert.ok(withDefault.some((i) => i.type === 'test-no-production-import'));
+  // 传入当前任务真实切片 → 识别 from models import 为生产绑定，不再误判。
+  const withModules = lintTestQuality(code, {
+    productionModules: ['models', 'store', 'statemachine', 'pipeline', 'main'],
+  });
+  assert.ok(!withModules.some((i) => i.type === 'test-no-production-import'));
+  assert.ok(!withModules.some((i) => i.type === 'test-inline-impl-double'));
+});
+
+test('productionModules 参数化：sys.modules 劫持按真实切片名识别', () => {
+  const code = `import sys
+
+def test_hijack():
+    sys.modules['store'] = object()
+    assert store_loaded() == 1
+`;
+  // 默认表无 store → 不触发。
+  assert.ok(!lintTestQuality(code).some((i) => i.type === 'test-sys-modules-hijack'));
+  // 传入 store → 触发 hard 劫持告警。
+  assert.ok(
+    lintTestQuality(code, { productionModules: ['store'] }).some(
+      (i) => i.type === 'test-sys-modules-hijack',
+    ),
+  );
+});
+
 test('sys.modules 赋值劫持项目模块 → test-sys-modules-hijack（hard）', () => {
   const code = `import sys
 import types

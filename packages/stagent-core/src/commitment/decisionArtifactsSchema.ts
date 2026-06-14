@@ -1,6 +1,7 @@
 import { extractModuleExportsFromDecisionRecord, pruneExportNoise } from './decisionRecordExports';
 import type { BehaviorSpecV1 } from './behaviorSpecSchema';
 import { filterBlockedPipDependencies } from '../python-contract/blockedPipDependencies';
+import { isPythonStdlibRoot } from '../python-contract/pythonStdlibRoots';
 
 export interface DecisionArtifactFileV1 {
   key: string;
@@ -178,7 +179,9 @@ export function collectDeclaredDependenciesFromInstance(
       merged.add(dep);
     }
   }
-  return filterBlockedPipDependencies(merged);
+  // 标准库模块（csv/json/datetime/dataclasses/enum…）不是 pip 包，模型常误列为依赖 →
+  // 写入 requirements.txt 后 pip install 失败（T6 run8：`csv`）。stdlib 一律剔除。
+  return filterBlockedPipDependencies(merged).filter((dep) => !isPythonStdlibRoot(dep));
 }
 
 /** import 根名别名（如 yaml）→ 排除；仅保留可 pip install 的包名。 */
@@ -189,7 +192,7 @@ export function toPipInstallableDependencies(deps: Iterable<string>): string[] {
   const out = new Set<string>();
   for (const dep of deps) {
     const pkg = dep.trim().toLowerCase();
-    if (!pkg || aliasImportRoots.has(pkg)) {
+    if (!pkg || aliasImportRoots.has(pkg) || isPythonStdlibRoot(pkg)) {
       continue;
     }
     out.add(pkg);
@@ -227,6 +230,40 @@ export function collectProjectModuleNames(
     names.add(m.name);
   }
   return [...names];
+}
+
+/**
+ * 收集 instance 全部 decide 阶段中、**排除某切片**的模块导出符号集合。
+ * 用于集成切片（main）export-missing 豁免：decide 常把它编排的下游切片函数误列进 main 契约，
+ * 但 main 是 orchestrator，不应被要求导出下游符号（T6 run6/batch3：main 契约含 import_tasks_from_csv）。
+ */
+export function collectSliceExportSymbolsFromInstance(
+  stageRuntimes: Array<{ stageId: string; outputs?: Record<string, unknown> }>,
+  decisionArtifactsKey: string,
+  excludeSemantic: string,
+): Set<string> {
+  const symbols = new Set<string>();
+  for (const rt of stageRuntimes) {
+    if (!rt.stageId.startsWith('stage_decide_')) {
+      continue;
+    }
+    const raw = rt.outputs?.[decisionArtifactsKey];
+    if (!raw || typeof raw !== 'object') {
+      continue;
+    }
+    for (const m of normalizeModuleExports((raw as DecisionArtifactsV1).modules)) {
+      if (m.name === excludeSemantic) {
+        continue;
+      }
+      for (const e of m.exports ?? []) {
+        const s = e.trim();
+        if (s) {
+          symbols.add(s);
+        }
+      }
+    }
+  }
+  return symbols;
 }
 
 /** 从 instance 全部 decide 阶段收集项目内模块名。 */

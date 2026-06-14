@@ -45,6 +45,7 @@ import {
   GLOBAL_ARCHITECTURE_DECIDE_STAGE_ID,
   isTestWriteStageId,
   semanticNameFromTestWriteStageId,
+  semanticNameFromTddStageId,
 } from '../workflow/StageIdPatterns';
 import { writeOutputToFileOf } from '../plan-completeness/planCompletenessStageAccess';
 import {
@@ -75,6 +76,33 @@ import {
   hardBehaviorSpecIssues,
   lintTestAgainstBehaviorSpec,
 } from '../commitment/BehaviorSpecLint';
+
+/**
+ * 解析当前任务的真实生产模块名供 test-quality lint 使用：
+ * decide modules[] SSOT ∪ 计划内 TDD stage（impl/test_write/test_run）语义 ∪ 约定 src/main。
+ * 不依赖任何任务专属硬编码，兼容 T4 量化与 T6 确定性平台等任意多切片任务。
+ */
+function resolveProductionModulesForTestQuality(
+  instance: { definition?: { stages?: Array<{ id: string }> }; stageRuntimes: Array<{ stageId: string; outputs?: Record<string, unknown> }> } | undefined,
+): string[] {
+  const names = new Set<string>(['src', 'main']);
+  if (!instance) {
+    return [...names];
+  }
+  for (const m of collectAllProjectModuleNamesFromInstance(
+    instance.stageRuntimes,
+    DECISION_ARTIFACTS_OUTPUT_KEY,
+  )) {
+    names.add(m);
+  }
+  for (const st of instance.definition?.stages ?? []) {
+    const sem = semanticNameFromTddStageId(st.id);
+    if (sem) {
+      names.add(sem);
+    }
+  }
+  return [...names];
+}
 
 export const BUILTIN_POST_STAGE_GATES: QualityGate[] = [
   {
@@ -172,7 +200,10 @@ export const BUILTIN_POST_STAGE_GATES: QualityGate[] = [
       } catch {
         return null;
       }
-      const issues = lintTestQuality(code);
+      // 生产模块名按当前任务真实切片解析（decide modules[] SSOT ∪ 计划 TDD stage 语义 ∪ 约定
+      // src/main），避免确定性平台任务（T6 models/store/...）被误判为「未 import 生产模块」假绿。
+      const productionModules = resolveProductionModulesForTestQuality(ctx.instance);
+      const issues = lintTestQuality(code, { productionModules });
       if (issues.length === 0) {
         return null;
       }

@@ -6,7 +6,12 @@ import {
   resolveModuleExports,
 } from '../commitment/decisionArtifactsSchema';
 import type { WorkflowInstance } from '../WorkflowDefinition';
-import { extractExportedSymbols, parsePythonFromImports } from './PythonExportContractLint';
+import {
+  extractExportedSymbols,
+  extractModuleLevelConstants,
+  extractImportedNames,
+  parsePythonFromImports,
+} from './PythonExportContractLint';
 import { isExternalPythonModuleRoot } from './pythonExternalModules';
 import { resolveSliceArtifacts } from './sliceContractGateHelpers';
 
@@ -108,6 +113,11 @@ export function lintTestImportsAgainstModuleContract(params: {
     }
     for (const name of imp.names) {
       if (name === '*' || exportSet.has(name)) {
+        continue;
+      }
+      // 集成切片 main 的约定入口符号（main/run/cli）即使 decide 契约漏声明也允许测试导入，
+      // 与 export-extra 侧的 MAIN_ENTRY_CONVENTIONAL_EXPORTS 放行对称（T6 测试 `from main import main`）。
+      if (semantic === 'main' && MAIN_ENTRY_CONVENTIONAL_EXPORTS.has(name)) {
         continue;
       }
       return {
@@ -239,8 +249,10 @@ export function lintImplExportsAgainstModuleContract(params: {
   sliceArtifacts: DecisionArtifactsV1 | null | undefined;
   globalArtifacts: DecisionArtifactsV1 | null | undefined;
   sliceDecisionRecord?: string | null;
+  /** 其它切片的导出符号；集成切片（main）契约误含下游函数时豁免 export-missing。 */
+  crossSliceExports?: ReadonlySet<string>;
 }): ModuleContractIssue | null {
-  const { workspaceRoot, implRelPath, semantic, sliceArtifacts, globalArtifacts, sliceDecisionRecord } =
+  const { workspaceRoot, implRelPath, semantic, sliceArtifacts, globalArtifacts, sliceDecisionRecord, crossSliceExports } =
     params;
   const exports = resolveModuleExports(
     semantic,
@@ -259,13 +271,26 @@ export function lintImplExportsAgainstModuleContract(params: {
   }
   const content = fs.readFileSync(abs, 'utf8');
   const exported = extractExportedSymbols(content);
+  // 可被 `from 本模块 import X` 导入的完整表面：顶层 def/class/__all__ + 顶层常量
+  // （ALLOWED_TRANSITIONS）+ 顶层 from-import re-export（main `from pipeline import …` 后转出）。
+  // 仅用于「缺失」判定；下方 export-extra 仍只看 def/class，内部常量/re-export 不误判多余。
+  const importable = new Set([
+    ...exported,
+    ...extractModuleLevelConstants(content),
+    ...extractImportedNames(content),
+  ]);
   const contractSet = new Set(exports);
   const sliceEntry = sliceArtifacts?.modules?.find((m) => m.name === semantic);
   const contractSource =
     sliceEntry && (sliceEntry.exports?.length ?? 0) > 0 ? 'slice' : 'global';
 
   for (const sym of exports) {
-    if (!exported.has(sym)) {
+    if (!importable.has(sym)) {
+      // 集成切片 main 的契约常被 decide 误塞下游切片函数（main 只编排、不导出它们）。
+      // 若该符号实为其它切片的导出且 main impl 未实现/转出，则豁免（非 main 的真实缺失）。
+      if (semantic === 'main' && crossSliceExports?.has(sym)) {
+        continue;
+      }
       return {
         code: 'python-impl-export-missing',
         message: `module-contract：${implRelPath} 未导出契约符号 ${sym}（${contractSource}）`,

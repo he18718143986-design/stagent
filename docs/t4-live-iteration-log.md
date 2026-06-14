@@ -6,10 +6,93 @@
 |------|---------------|-------------------|
 | T1–T3 | headless 流水线完成（T3 可 `acceptRunnerFailure`） | 不适用 |
 | T4/T5 | `workflowCompleted` 或历史 runner-failed-accepted | **必须** pytest 全绿 + MVP 目录 + traceability + `workflowCompleted` |
+| **T6（平台及格线）** | — | **必须** pytest 全绿 + 确定性 MVP 目录（models/store/statemachine/pipeline）+ traceability + `workflowCompleted` |
 
 - `npm run feedback:live:all` 报告含 `strict delivery: X/Y`
 - Engine：`blockDeliveryOnTestFailure` 对 software 默认 true；test 红不得 delivery
 - 详见 [`docs/adr/0004-t4-delivery-hardening.md`](adr/0004-t4-delivery-hardening.md)
+
+---
+
+## 平台及格线 T6 — 2026-06-14（确定性多切片靶子落地 · 决策记录 D2/D3）
+
+> **动机**：T4 南华期货把「平台正确性」与「signals/broker 量化策略语义」绑成一个 strict 验收（= 用奥数题考编译器）。run9 证实剩余卡点已不在确定性引擎，而在量化语义的模型收敛 + 全 decide-pro 的单轮时长。按 D2/D3，新增**确定性多切片任务**作平台及格线，把两者解耦：若 T6 能稳定连续 strict pass，即证主干（DAG + Plan Compiler + Gate/SSOT + fix/replan + 异族出题人 + integration 路由）OK，T4 卡的是量化语义模型能力，而非架构。
+
+### 靶子设计（`live-t6-deterministic-platform`）
+
+任务「Todo 批处理 CLI」——刻意只含**可逐例断言的确定性契约**，无统计/数值/策略模糊语义：
+
+| 切片 | 确定性契约 |
+|------|-----------|
+| `models/` | `validate_task(data)->list[str]`：title 非空、status∈枚举、priority∈1..5，逐条错误可断言 |
+| `store/` | `TaskStore` CRUD：`add/get/update/delete/list_all` + `save_json/load_json`，自增 id 确定 |
+| `statemachine/` | `ALLOWED_TRANSITIONS` + `can_transition/apply_transition`，非法转移抛 `InvalidTransition` |
+| `pipeline/` | `import_tasks_from_csv`（合法入库/非法跳过计数）+ `summarize`（各 status 计数） |
+| `main.py` | 读 config.yaml → 跑 pipeline → 写 summary JSON |
+
+### 机制落点（与 T4 共享同一 strict 通路，仅替换靶子）
+
+| # | 机制 | 落点 |
+|---|------|------|
+| 1 | `assertStrictMvpPass` 泛化：`moduleDirs` + 声明式 `traceabilityRules`（`{id,dirs,pattern,requireDirPy,hint}`）从 spec 注入；缺省回退 T4 量化靶子（向后兼容） | `scripts/headless/lib/mvp-acceptance.mjs` |
+| 2 | T6 tier 自带 `mvp.moduleDirs` + `mvp.traceability`；userInput 自含完整契约（≥4 path-like token → 触发多模块布局、禁 express） | `scripts/headless/lib/live-tasks.mjs` |
+| 3 | strict 硬加固（requireCompleteness/skeletonCompiler/afk/verifyImportsStrict/maxTokens/timeout）改由 `spec.pass.strict` 驱动，T4/T5/T6 共享；T4-root 提升仍仅限南华族 | `scripts/headless/run.mjs` |
+| 4 | `feedback:live:t6` / `feedback:live:t6:batch`（连跑 3 次取成功率，§6.1 口径） | `package.json` |
+| - | 单测：`mvp-acceptance.test.mjs`（泛化 + 声明式规则 + 默认回退 T4）、`live-tasks.test.mjs`（tier 6 解析 / strict spec / 多模块 token）；`node --test scripts/headless/lib/*.test.mjs` **7 pass**。`@stagent/core` 仍 **917 pass**（无回归） | — |
+
+> 说明：T6 用全新临时工作区（无 resume），与「连续 strict」采样口径一致；不纳入 `--live-tier all`（避免与 T4/T5 混算 strict）。
+
+### Live 运行journey（run1→run9，命令 `feedback:live:t6`，全新工作区无 resume）
+
+| run | 终态 | 卡点 / 根因（全部确定性引擎缺陷或可恢复方差） | 根治 |
+|-----|------|------|------|
+| 1 | ❌ generate | `pandas/` 斜杠 token 被当第 6 切片 → 57>55 | 任务 deps 去斜杠 + maxStages 60 |
+| 2 | ❌ main 先跑 | 集成切片 `main` 被排在依赖切片之前（LLM 决策 modules[] 把 main 列首位） | `orderEntrySliceLast`：入口切片恒末位 |
+| 3 | ❌ test_models | test-quality lint 生产模块名硬编码 T4 切片 → `models` 被误判内联 Test Double 假绿 | lint 生产模块名参数化（decide modules[] SSOT ∪ TDD stage 语义） |
+| 4 | ❌ statemachine impl | 契约导出 `ALLOWED_TRANSITIONS`（模块级常量），导出表面检测只认 def/class | `extractModuleLevelConstants` 计入 export-missing 表面 |
+| 5 | ❌ decide 架构 | 重试注释标题带括号 `（至少 1 条）` 与 lint titleRegex 不匹配 → 模型照抄永拒 | 重试注释用干净标题 + 标题外说明数量 |
+| 6 | ❌ main impl | `main` 契约含 `import_tasks_from_csv`（pipeline 函数），main `from pipeline import` re-export 不被识别 | `extractImportedNames`：from-import re-export 计入表面 |
+| 7 | ❌ decide 架构 | 模型方差：偶发漏「AI 无法验证的假设」节 / 边界场景<2，2 次重试未恢复 | AFK decide 重试预算 2→4（吸收可恢复方差） |
+| 8 | ❌ pipeline test_run | 标准库 `csv` 被列为依赖 → `pip install csv` 失败 | stdlib 模块名（csv/json/…）不得作为 pip 依赖 |
+| **9** | **✅ workflowCompleted · strict 1/1** | — | **首次平台及格线 strict 通过** |
+
+run9：49 stages · 25 calls · ~14.7min；交付 config.yaml + models/store/statemachine/pipeline + main.py + 5 个测试文件（**复跑 69 passed**）+ DELIVERY.md。
+
+### 判定（与决策记录一致：架构健康，卡点在量化语义模型能力，非引擎）
+
+- 失败 run1→run9 **单调前移、越来越具体**，每个都是局部、确定性、可 gate/SSOT/参数化收敛的缺陷或可恢复模型方差——正是健康架构特征。本轮根治的 6 处确定性引擎缺陷**全部是 T4 量化任务恰好没触发的硬编码/检测盲区**（T4 切片只导出 def/class、不含模块常量/re-export/stdlib 误列），被确定性平台任务一次性照出来。
+- **平台正确性已被确定性多切片任务证伪「架构需重写」**：引擎能把数据管道/CRUD/状态机多切片任务推到 strict 通过（run9）。这反过来印证 T4 signals/broker 的剩余卡点是**量化语义的模型收敛能力**，而非主干架构——决策记录 D2/D3 的拆分判据成立。
+
+### 连续 strict 批跑（`feedback:live:t6:batch` · --repeat 3）
+
+| 批次 | 代码 | 结果 | 说明 |
+|------|------|------|------|
+| batch1 | 0a6356d（main-entry 修复前） | strict **0/3** | run1 main-entry（已修）/ run2 decide 内容方差 / run3 decide 契约合成漏列 |
+| batch2 | 9 fixes（builtins 前） | strict **1/3** ✅ | **run2 第二次干净 strict 通过**；run1 `import builtins`（已修）/ run3 store 契约含内建 `max`（已修） |
+| batch3 | 10 fixes | strict **0/3** | run1 `verify_imports_main`；run2 main 契约含 `import_tasks_from_csv`（已修）/ run3 main 契约含模块名 `store`（已修） |
+
+> **累计 2 次干净 strict 通过**（run9 + batch2-run2）。每批残留失败要么是**新照出的确定性引擎缺陷**（逐个根治），要么是 **decide 阶段模型输出方差**——内容 rigor 不稳（I-17/18/19 简单切片难凑 2 个边界场景）+ 契约合成噪声（尤以**集成切片 main** 为甚：decide 反复把下游函数名/模块名/内建塞进 main 契约）。每轮 6 个决策各有失败概率、按轮复合 → 连续 strict 成功率被 decide 方差压低。
+
+### 本轮根治的 10 处确定性引擎缺陷（均带单测；`@stagent/core` 935 pass）
+
+1. 入口切片 `main` 恒排末位（`orderEntrySliceLast`）——非 T4 模块名时 LLM 把 main 列首致先跑团灭。
+2. test-quality lint 生产模块名参数化——解耦 T4 硬编码 `indicators/signals/risk/broker`。
+3. 模块顶层常量计入可导入表面（`extractModuleLevelConstants`）——修 `ALLOWED_TRANSITIONS` export-missing 假阴。
+4. decide 重试注释标题去括号——与 lint titleRegex 一致，避免模型照抄带括号标题永拒。
+5. from-import re-export 计入可导入表面（`extractImportedNames`）——修集成切片 `from pipeline import …` 转出。
+6. 标准库模块名（csv/json/…）不得作为 pip 依赖——修 requirements 含 csv 致 pip 失败。
+7. 测试导入 main 约定入口符号即使契约漏声明也放行——与 export-extra 对称。
+8. `PYTHON_STDLIB_ROOTS` 补 builtins/operator/textwrap 等——修 `import builtins` 被判未声明依赖。
+9. Python 内建函数（max/len/sorted…）不得作为契约 export 噪声——修 store 契约含 `max` 团灭。
+10. 集成切片 main 豁免导出下游切片符号/模块名（`crossSliceExports`）——修 main 契约被 decide 塞 `import_tasks_from_csv`/`store` 团灭。
+
+> 外加 1 处 AFK 鲁棒性调参：decide lint 重试预算 2→4。这 10 处全是 **T4 量化任务恰好没触发的耦合/检测盲区**（T4 切片只导出 def/class、不含模块常量/re-export/stdlib/内建误列、模块名恰好命中硬编码表、main 契约恰好干净）。确定性平台任务把它们一次性照出——正是 D3 的预期价值。
+
+### 总判定
+
+- **架构健康，不重写**：引擎能把数据管道/CRUD/状态机多切片任务推到 **strict 通过（已 2 次）**。D2/D3 的「平台正确性 vs 量化语义」拆分判据成立。
+- **平台对非量化任务的鲁棒性已显著补齐**（10 处根治），且**残余瓶颈被精确定位**：decide 阶段结构化输出的**模型方差**（内容 rigor + 契约合成噪声，尤以集成切片为甚），而非主干架构——与 T4 signals/broker「量化语义模型收敛」同源，均属**模型层**。
+- **下一步（非本 PR）**：降低 decide 方差应走「提示/采样/门禁分级」（如对集成切片放宽 export 契约硬度、对简单切片放宽 I-18 场景数），而非改主干 DAG/Plan-Compiler。
 
 ---
 

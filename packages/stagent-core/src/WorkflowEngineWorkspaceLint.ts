@@ -45,6 +45,27 @@ export interface WorkspaceLintContext {
   pythonPypiSymbolLintMode: 'off' | 'warn' | 'hard';
 }
 
+/** 从工作区文件集解析生产模块名：顶层非 tests 目录（含 .py）+ 顶层 *.py（如 main.py）+ 约定 src/main。 */
+function collectWorkspaceProductionModules(files: ProjectFile[]): string[] {
+  const names = new Set<string>(['src', 'main']);
+  for (const f of files) {
+    const norm = f.path.replace(/\\/g, '/').replace(/^\.\//, '');
+    if (!/\.py$/i.test(norm) || /(^|\/)(test_|tests?\/)/i.test(norm)) {
+      continue;
+    }
+    const segs = norm.split('/').filter(Boolean);
+    if (segs.length >= 2) {
+      const top = segs[0];
+      if (top && top !== 'tests' && top !== 'src') {
+        names.add(top);
+      }
+    } else if (segs.length === 1) {
+      names.add(segs[0].replace(/\.py$/i, ''));
+    }
+  }
+  return [...names];
+}
+
 export async function collectWorkspaceProjectFiles(ctx: WorkspaceLintContext): Promise<ProjectFile[]> {
   const ws = ctx.workspaceRootAbsolute;
   if (!ws || !ctx.instance) {
@@ -159,9 +180,14 @@ export async function runWorkspaceContractLint(ctx: WorkspaceLintContext): Promi
       }
     }
     warnings.push(...lintCrossFileKeyContract(files, canonicalKeys).warnings);
+    // 生产模块名按工作区实际包目录解析（顶层非 tests 目录的 .py / main.py），供 test-quality
+    // lint 用——避免确定性平台任务（非 T4 切片名）被误判为「未 import 生产模块」假绿。
+    const productionModules = collectWorkspaceProductionModules(files);
     for (const f of files) {
       if (/(^|\/)(test_|tests?\/).*\.py$|_test\.py$/i.test(f.path)) {
-        warnings.push(...testQualityIssuesToWarnings(f.path, lintTestQuality(f.content)));
+        warnings.push(
+          ...testQualityIssuesToWarnings(f.path, lintTestQuality(f.content, { productionModules })),
+        );
       }
     }
     warnings.push(...lintSampleReaderHeaderContract(files));

@@ -20,6 +20,25 @@ test('extractPythonSliceModules ignores mock/CSV token on live T4 userInput', ()
   const liveSnippet = `${T4_REQUIREMENT_SNIPPET}\n首版不接实盘；指数可用 mock/CSV`;
   const modules = extractPythonSliceModules(liveSnippet, 'software');
   assert.deepEqual(modules, ['indicators', 'signals', 'risk', 'broker', 'main']);
+})
+
+test('extractPythonSliceModules orders entry slice (main) last for non-T4 modules', () => {
+  // main 在文本中先出现，仍须排到最后（集成切片依赖前序切片落盘）。
+  const input =
+    '实现 main.py 串联各切片，并提供 models/、store/、statemachine/、pipeline/ 四个垂直切片。'
+  const modules = extractPythonSliceModules(input, 'software')
+  assert.equal(modules[modules.length - 1], 'main')
+  assert.deepEqual([...modules].sort(), ['main', 'models', 'pipeline', 'statemachine', 'store'])
+})
+
+test('expandGreenfieldPythonSkeleton moves main last even when input.modules lists it first', () => {
+  const { modules } = expandGreenfieldPythonSkeleton({
+    userInput: '任务清单 CLI：models/ store/ statemachine/ pipeline/ main.py',
+    taskType: 'software',
+    modules: ['main', 'models', 'store', 'statemachine', 'pipeline'],
+  })
+  assert.equal(modules[modules.length - 1], 'main')
+  assert.deepEqual(modules, ['models', 'store', 'statemachine', 'pipeline', 'main'])
 });
 
 test('shouldUseGreenfieldPythonSkeleton requires explicit skeletonCompiler flag', () => {

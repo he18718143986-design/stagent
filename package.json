@@ -5,7 +5,8 @@
   "private": true,
   "_scripts_doc": {
     "feedback:live:all": "T1–T3 pipeline pass; T4/T5 use pass.strict MVP acceptance (pytest + modules + traceability). Report shows strict delivery: X/Y.",
-    "feedback:live:t4": "Strict delivery tier — fails if tests red or MVP layout incomplete (ADR-0004)."
+    "feedback:live:t4": "Strict delivery tier — fails if tests red or MVP layout incomplete (ADR-0004).",
+    "feedback:live:t6": "确定性多切片平台及格线（CRUD+状态机+数据管道）。与量化语义解耦的 strict 靶子；:batch 连跑 3 次取成功率（决策记录 D2/D3）。"
   },
   "main": "./out/main/index.js",
   "scripts": {
@@ -25,6 +26,7 @@
     "lint:fix": "eslint src --fix",
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
+    "test:headless": "npm run build:core && node --test scripts/headless/lib/*.test.mjs",
     "test:e2e": "npm run build && playwright test",
     "feedback": "npm run build:core && node scripts/headless/run.mjs",
     "feedback:quick": "node scripts/headless/run.mjs",
@@ -36,6 +38,8 @@
     "feedback:live:t4": "node scripts/headless/run.mjs --live --scenario execute --live-tier 4 --keep",
     "feedback:live:t4:batch": "node scripts/headless/run.mjs --live --scenario execute --live-tier 4 --keep --repeat 5",
     "feedback:live:t5": "node scripts/headless/run.mjs --live --scenario execute --live-tier 5 --keep",
+    "feedback:live:t6": "node scripts/headless/run.mjs --live --scenario execute --live-tier 6 --keep",
+    "feedback:live:t6:batch": "node scripts/headless/run.mjs --live --scenario execute --live-tier 6 --keep --repeat 3",
     "feedback:unit": "npm run build:core && node scripts/headless/run.mjs --with-unit",
     "feedback:charter-suggest": "npm run build:core && node scripts/headless/run.mjs --scenario charter-suggest --keep",
     "feedback:charter-auto": "npm run build:core && node scripts/headless/run.mjs --scenario charter-auto --keep",

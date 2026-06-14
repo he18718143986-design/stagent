@@ -39,24 +39,37 @@ const EXISTENCE_ONLY = /\bassert\s+\w+\s+is\s+not\s+None\s*(?:,|$)|assertIsNotNo
 // 断言私有实现细节：assert obj._private ... / patch 内部 _helper
 const IMPLEMENTATION_DETAIL = /\bassert\s+[\w.]*\._[A-Za-z]/;
 
-const PRODUCTION_IMPORT_RE =
-  /^\s*(from\s+(indicators|signals|risk|broker|src)\b|import\s+(indicators|signals|risk|broker|main)\b)/m;
+/**
+ * 被测生产模块名（SSOT）。默认为 T4 南华期货切片 + 约定 src/main，调用方（postStageGates /
+ * workspace lint）应按当前任务的真实切片语义覆盖——否则确定性平台任务（如 T6 的
+ * models/store/statemachine/pipeline）会因模块名不在默认表里被误判为「未 import 生产模块」假绿。
+ */
+export const DEFAULT_PRODUCTION_MODULES: readonly string[] = [
+  'indicators',
+  'signals',
+  'risk',
+  'broker',
+  'src',
+  'main',
+];
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** 归一化生产模块名 → 正则交替式；空集回退默认 T4 表。 */
+function moduleAlternation(productionModules?: readonly string[]): string {
+  const list = (productionModules && productionModules.length > 0
+    ? productionModules
+    : DEFAULT_PRODUCTION_MODULES
+  )
+    .map((m) => m.trim())
+    .filter(Boolean);
+  const uniq = [...new Set(list.length > 0 ? list : DEFAULT_PRODUCTION_MODULES)];
+  return uniq.map(escapeRe).join('|');
+}
 
 const INLINE_CLASS_RE = /^\s*class\s+([A-Z][A-Za-z0-9_]*)\s*[:(]/gm;
-
-const INTERNAL_MODULE_MOCK_RE =
-  /(?:@patch|patch|mocker\.patch)\s*\(\s*['"]((?:indicators|signals|risk|broker|src|main)\.[^'"]+)['"]/g;
-
-// sys.modules 劫持被测项目包（Run #22 根因）：sys.modules['indicators']=… /
-// sys.modules.setdefault('signals', …) / monkeypatch.setitem(sys.modules, 'risk', …)。
-// 仅匹配项目内模块名；测试 stub 第三方 SDK（如 ctpbee）不在此列。
-const PROJECT_MODULE_NAMES = String.raw`(?:indicators|signals|risk|broker|src|main)(?:\.[\w.]+)?`;
-const SYS_MODULES_HIJACK_RE = new RegExp(
-  String.raw`sys\.modules\s*\[\s*['"](${PROJECT_MODULE_NAMES})['"]\s*\]\s*=` +
-    String.raw`|sys\.modules\.setdefault\s*\(\s*['"](${PROJECT_MODULE_NAMES})['"]` +
-    String.raw`|monkeypatch\.setitem\s*\(\s*sys\.modules\s*,\s*['"](${PROJECT_MODULE_NAMES})['"]`,
-  'g',
-);
 
 function extractInlineTestClasses(code: string): string[] {
   const names: string[] = [];
@@ -70,19 +83,26 @@ function extractInlineTestClasses(code: string): string[] {
 }
 
 /** 测试须 import 真实生产模块；禁止在测试内重新定义 impl 类（Test Double 逃逸）。 */
-export function lintTestProductionBinding(testCode: string): TestQualityIssue[] {
+export function lintTestProductionBinding(
+  testCode: string,
+  productionModules?: readonly string[],
+): TestQualityIssue[] {
   const issues: TestQualityIssue[] = [];
   const code = testCode ?? '';
   if (!code.trim() || !looksLikeTest(code)) {
     return issues;
   }
-  const hasProductionImport = PRODUCTION_IMPORT_RE.test(code);
+  const mods = moduleAlternation(productionModules);
+  const productionImportRe = new RegExp(
+    String.raw`^\s*(from\s+(${mods})\b|import\s+(${mods})\b)`,
+    'm',
+  );
+  const hasProductionImport = productionImportRe.test(code);
   const inlineClasses = extractInlineTestClasses(code);
   if (inlineClasses.length > 0 && !hasProductionImport) {
     issues.push({
       type: 'test-no-production-import',
-      detail:
-        '测试未 import 生产模块（indicators/signals/risk/broker/src/main）；可能为内联 Test Double 假绿',
+      detail: `测试未 import 生产模块（${mods.replace(/\\/g, '')}）；可能为内联 Test Double 假绿`,
     });
     issues.push({
       type: 'test-inline-impl-double',
@@ -164,14 +184,25 @@ export function lintSelfShadowedCall(testCode: string): TestQualityIssue[] {
 }
 
 /** sys.modules 劫持被测项目包 → hard（fix 链不可改 test，落盘前必须拦截）。 */
-export function lintSysModulesHijack(testCode: string): TestQualityIssue[] {
+export function lintSysModulesHijack(
+  testCode: string,
+  productionModules?: readonly string[],
+): TestQualityIssue[] {
   const issues: TestQualityIssue[] = [];
   const code = testCode ?? '';
   if (!code.trim() || !looksLikeTest(code)) {
     return issues;
   }
+  // sys.modules 劫持被测项目包（Run #22 根因）：仅匹配项目内模块名；第三方 SDK stub 不在此列。
+  const projectModuleNames = String.raw`(?:${moduleAlternation(productionModules)})(?:\.[\w.]+)?`;
+  const sysModulesHijackRe = new RegExp(
+    String.raw`sys\.modules\s*\[\s*['"](${projectModuleNames})['"]\s*\]\s*=` +
+      String.raw`|sys\.modules\.setdefault\s*\(\s*['"](${projectModuleNames})['"]` +
+      String.raw`|monkeypatch\.setitem\s*\(\s*sys\.modules\s*,\s*['"](${projectModuleNames})['"]`,
+    'g',
+  );
   const targets = new Set<string>();
-  for (const m of code.matchAll(SYS_MODULES_HIJACK_RE)) {
+  for (const m of code.matchAll(sysModulesHijackRe)) {
     const target = (m[1] ?? m[2] ?? m[3])?.trim();
     if (target) {
       targets.add(target);
@@ -188,14 +219,23 @@ export function lintSysModulesHijack(testCode: string): TestQualityIssue[] {
 }
 
 /** @patch / mock.patch 指向项目内模块 → warn（首版不 hard block）。 */
-export function lintInternalModuleMocks(testCode: string): TestQualityIssue[] {
+export function lintInternalModuleMocks(
+  testCode: string,
+  productionModules?: readonly string[],
+): TestQualityIssue[] {
   const issues: TestQualityIssue[] = [];
   const code = testCode ?? '';
   if (!code.trim() || !looksLikeTest(code)) {
     return issues;
   }
+  const internalModuleMockRe = new RegExp(
+    String.raw`(?:@patch|patch|mocker\.patch)\s*\(\s*['"]((?:${moduleAlternation(
+      productionModules,
+    )})\.[^'"]+)['"]`,
+    'g',
+  );
   const targets = new Set<string>();
-  for (const m of code.matchAll(INTERNAL_MODULE_MOCK_RE)) {
+  for (const m of code.matchAll(internalModuleMockRe)) {
     const target = m[1]?.trim();
     if (target) {
       targets.add(target);
@@ -218,13 +258,22 @@ function looksLikeTest(code: string): boolean {
   return /\bdef\s+test_|\bclass\s+Test|\bit\(|\btest\(|unittest|pytest/.test(code);
 }
 
+export interface LintTestQualityOptions {
+  /** 当前任务的真实生产模块名（切片语义）；缺省回退 T4 默认表。 */
+  productionModules?: readonly string[];
+}
+
 /** 对单段测试代码做质量 lint。 */
-export function lintTestQuality(testCode: string): TestQualityIssue[] {
+export function lintTestQuality(
+  testCode: string,
+  options: LintTestQualityOptions = {},
+): TestQualityIssue[] {
   const issues: TestQualityIssue[] = [];
   const code = testCode ?? '';
   if (!code.trim()) {
     return issues;
   }
+  const { productionModules } = options;
 
   if (looksLikeTest(code) && !hasAnyAssertion(code)) {
     issues.push({
@@ -259,9 +308,9 @@ export function lintTestQuality(testCode: string): TestQualityIssue[] {
     });
   }
 
-  issues.push(...lintTestProductionBinding(code));
-  issues.push(...lintInternalModuleMocks(code));
-  issues.push(...lintSysModulesHijack(code));
+  issues.push(...lintTestProductionBinding(code, productionModules));
+  issues.push(...lintInternalModuleMocks(code, productionModules));
+  issues.push(...lintSysModulesHijack(code, productionModules));
   issues.push(...lintBrittleAssertions(code));
   issues.push(...lintSelfShadowedCall(code));
 

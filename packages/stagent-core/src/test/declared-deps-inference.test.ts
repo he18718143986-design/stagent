@@ -14,7 +14,15 @@ import {
   toPipInstallableDependencies,
 } from '../commitment/decisionArtifactsSchema';
 import { lintDeclaredDependenciesInFiles } from '../python-contract/PythonDeclaredDependenciesLint';
+import { isPythonStdlibRoot } from '../python-contract/pythonStdlibRoots';
 import { DECISION_ARTIFACTS_OUTPUT_KEY } from '../WorkflowOutputKeys';
+
+test('isPythonStdlibRoot 覆盖 builtins/operator 等常用 stdlib（T6 run：import builtins 不应判未声明依赖）', () => {
+  for (const m of ['builtins', 'operator', 'textwrap', 'statistics', 'base64', 'csv', 'json']) {
+    assert.equal(isPythonStdlibRoot(m), true, `${m} 应识别为 stdlib`);
+  }
+  assert.equal(isPythonStdlibRoot('pandas'), false);
+});
 
 test('inferImplicitDependenciesFromArtifacts：config.yaml → 仅 pyyaml（非 pip 包名 yaml）', () => {
   const deps = inferImplicitDependenciesFromArtifacts({
@@ -27,6 +35,38 @@ test('inferImplicitDependenciesFromArtifacts：config.yaml → 仅 pyyaml（非 
 test('isDeclaredImportRoot：pyyaml 已声明时 import yaml 合法', () => {
   assert.equal(isDeclaredImportRoot('yaml', ['pytest', 'numpy', 'pandas', 'pyyaml']), true);
   assert.equal(isDeclaredImportRoot('yaml', ['pytest', 'numpy', 'pandas']), false);
+});
+
+test('collectDeclaredDependenciesFromInstance 剔除标准库（csv/json/datetime）不进 requirements（T6 run8）', () => {
+  const deps = collectDeclaredDependenciesFromInstance(
+    [
+      {
+        stageId: 'stage_decide_pipeline',
+        outputs: {
+          [DECISION_ARTIFACTS_OUTPUT_KEY]: {
+            version: 1,
+            files: [],
+            dependencies: ['pandas', 'csv', 'json', 'datetime', 'pyyaml'],
+          },
+        },
+      },
+    ],
+    DECISION_ARTIFACTS_OUTPUT_KEY,
+  );
+  assert.equal(deps.includes('csv'), false);
+  assert.equal(deps.includes('json'), false);
+  assert.equal(deps.includes('datetime'), false);
+  assert.equal(deps.includes('pandas'), true);
+  assert.equal(deps.includes('pyyaml'), true);
+});
+
+test('toPipInstallableDependencies 跳过标准库名', () => {
+  const pkgs = toPipInstallableDependencies(['pandas', 'csv', 'json', 'yaml', 'pyyaml']);
+  assert.equal(pkgs.includes('csv'), false);
+  assert.equal(pkgs.includes('json'), false);
+  assert.equal(pkgs.includes('yaml'), false); // import 别名
+  assert.equal(pkgs.includes('pandas'), true);
+  assert.equal(pkgs.includes('pyyaml'), true);
 });
 
 test('collectDeclaredDependenciesFromInstance 合并隐式 pyyaml（global decide 含 config.yaml）', () => {

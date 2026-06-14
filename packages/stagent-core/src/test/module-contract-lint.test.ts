@@ -71,6 +71,30 @@ test('lintTestImportsAgainstModuleContract blocks undeclared symbol', () => {
   assert.equal(issue?.symbol, 'compute');
 });
 
+test('lintTestImportsAgainstModuleContract allows conventional main entry symbol absent from contract (T6)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mod-contract-main-'));
+  const testPath = 'tests/test_main.py';
+  fs.mkdirSync(path.join(dir, 'tests'), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, testPath),
+    'from main import main\n\ndef test_runs():\n    main("config.yaml")\n',
+  );
+  // 契约只声明了编排符号，没列入口 main —— 测试导入约定入口 main 不应被拦。
+  const artifacts = {
+    version: 1 as const,
+    files: [],
+    modules: [{ name: 'main', exports: ['run_pipeline'] }],
+  };
+  const issue = lintTestImportsAgainstModuleContract({
+    workspaceRoot: dir,
+    testRelPath: testPath,
+    semantic: 'main',
+    sliceArtifacts: artifacts,
+    globalArtifacts: null,
+  });
+  assert.equal(issue, null);
+});
+
 test('lintTestImportsAgainstModuleContract blocks from __init__ instead of slice module', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mod-contract-'));
   const testPath = 'tests/test_indicators.py';
