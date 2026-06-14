@@ -13,6 +13,38 @@
 
 ---
 
+## 运行 #70 — 2026-06-14（稳定性轮次 run7：全切片绿、交付前 config.yaml 空内容失败 ❌ · 史上最深）
+
+| 字段 | 值 |
+|------|-----|
+| 命令 | `feedback:live:t4`（全新工作区 `/tmp/t4-acc/run7`，无 `--resume`） |
+| 耗时 | 1872.9s（36 calls；in 198478 / out 160363 tok） |
+| headless 判定 | **FAIL** `file-write empty content: stage=stage_write_config sourceKey=configContent target=config.yaml` |
+| instance | `/tmp/t4-acc/run7/.stagent/instances` |
+
+### 里程碑（self-shadow 离线根治后推进最深）
+
+| 阶段 | 状态 |
+|------|------|
+| indicators / signals / risk / broker / **main** test_run | ✅ 全绿（signals 经 `runtime_replan_testfix_signals` 收敛） |
+| **stage_write_config** | ❌ `configContent` 空 → file-write 空内容失败（与历史 Run #13 同类） |
+
+### RCA（架构决策漏出 config.yaml 正文，交付前一刻才暴露）
+
+`stage_write_config` 是被动 file-write，`sourceStageId=stage_decide_architecture_overview, sourceOutputKey=configContent`。架构决策的 decisionArtifacts.files 须含 `{key:"configContent", path:"config.yaml", content:…}`，由 `LlmTextStageRunner` 落入 `outputs.configContent`。本轮 LLM **漏出 configContent**（变量方差）→ outputs 空 → 跑了 ~31min 全切片绿后在交付前一刻空内容团灭。
+
+### 根治（Run #70 代码 · 确定性 gate + 复用 AFK 重试）
+
+| # | 机制 | 落点 |
+|---|------|------|
+| 1 | 批准架构决策时硬校验：计划含 `stage_write_config` 时，决策必须产出可解析的 config.yaml 正文（`configContent` 直出或 decisionArtifacts.files yaml），缺则拒绝（错误面带 `decisionLintRejected:arch-config` marker，复用 #66A 的 AFK 重试链，前置便宜重试而非交付前团灭） | `hitl/DecisionLintGate.evaluateApproveArchitectureConfigOrReject`、`HitlApproveDecision.ts` |
+| 2 | `buildArchitectureConfigRetryUserComment()` + headless 按 `arch-config` kind 注入「补 configContent」反馈；`configYamlFromDecideOutputs` SSOT 抽出 | `DecisionRecordVerify.ts`、`commitment/resolveArchitectureConfigYaml.ts`、`run.mjs` |
+| - | 单测：`decision-rejection.test.ts`（缺 config 拒绝 kind=arch-config / 有 config 放行 / 无 write_config 计划放行）；`@stagent/core` **917 pass** |
+
+> 连续 strict 计数：#66 ✅ → #67/#68/#69/#70 ❌（均已根因落码或外部阻断；根治后重启连击）。
+
+---
+
 ## 离线根治 — 2026-06-14（架构评估结论 + 复发性假红测试 SSOT · 零 API）
 
 > **架构是否重写？否。** 证据（#66–#69）符合健康架构特征「失败单调前移、越来越具体」：缺陷均为局部、确定性、可 gate/SSOT/retry 收敛的点，或外部阻断（402）；主干（DAG + Plan Compiler + Gate/SSOT + fix/replan + 异族出题人 + integration 路由）已产出过完整 strict 交付（#66）。应重估的是**验收纪律**——按「先离线根治、再 Live 复验」收敛复发点，而非重写架构（与 2026-06-13 决策记录一致）。

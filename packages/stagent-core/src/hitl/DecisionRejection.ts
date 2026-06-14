@@ -18,7 +18,9 @@
 export const DECISION_LINT_REJECTED_MARKER = 'decisionLintRejected';
 
 /** 决策拒绝的种类，决定 AFK 重试时注入哪种反馈注释。 */
-export type DecisionRejectionKind = 'content-lint' | 'behavior-spec';
+export type DecisionRejectionKind = 'content-lint' | 'behavior-spec' | 'arch-config';
+
+const KNOWN_KINDS: ReadonlySet<string> = new Set(['content-lint', 'behavior-spec', 'arch-config']);
 
 const KIND_RE = new RegExp(`\\[${DECISION_LINT_REJECTED_MARKER}:([a-z-]+)\\]`);
 
@@ -42,8 +44,8 @@ export function decisionRejectionKindFromError(error: unknown): DecisionRejectio
     return undefined;
   }
   const m = KIND_RE.exec(error);
-  if (m && (m[1] === 'content-lint' || m[1] === 'behavior-spec')) {
-    return m[1];
+  if (m && KNOWN_KINDS.has(m[1]!)) {
+    return m[1] as DecisionRejectionKind;
   }
   return 'content-lint';
 }

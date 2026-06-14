@@ -4,6 +4,7 @@ import { markDecisionApproved } from '../WorkflowStateTransitions';
 import { emitStageDoneAdvancePersist } from '../WorkflowEngineContinuation';
 import { primaryOutputKey } from '../WorkflowInputContent';
 import {
+  evaluateApproveArchitectureConfigOrReject,
   evaluateApproveBehaviorSpecOrReject,
   evaluateApproveDecisionLintOrReject,
 } from './DecisionLintGate';
@@ -74,6 +75,12 @@ export async function handleApproveDecision(
       rt.outputs,
       DECISION_ARTIFACTS_OUTPUT_KEY,
     )
+  ) {
+    return;
+  }
+
+  if (
+    !evaluateApproveArchitectureConfigOrReject(host, panel, stageId, instance.definition, rt.outputs)
   ) {
     return;
   }

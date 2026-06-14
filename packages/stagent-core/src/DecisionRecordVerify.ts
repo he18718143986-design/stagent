@@ -168,6 +168,21 @@ export function buildBehaviorSpecRetryUserComment(): string {
   ].join('\n');
 }
 
+/**
+ * 全局架构决策缺 config.yaml 正文时的重试反馈（T4 Run #70 根治）。
+ * 下游 `stage_write_config` 以 sourceOutputKey=configContent 落盘 config.yaml；
+ * 决策必须在 decisionArtifacts.files 提供该正文，否则交付前一刻才空内容失败。
+ */
+export function buildArchitectureConfigRetryUserComment(): string {
+  return [
+    '决策被拒：全局架构决策缺少 config.yaml 正文，下游 stage_write_config 依赖它。',
+    '请在 decisionArtifacts.files 中补一条完整记录：',
+    '{"key":"configContent","path":"config.yaml","format":"yaml","content":"<完整 config.yaml 正文>"}',
+    'content 必须是非空、可被 yaml.safe_load 解析的完整配置（含各模块需要的键，如指标参数、风控点数、数据源、券商参数等）。',
+    '只输出决策内容本身（含 decisionArtifacts sidecar），不要解释这次重写。',
+  ].join('\n');
+}
+
 export function verifyDecisionRecord(record: string): VerifyDecisionRecordResult {
   const violations: DecisionViolation[] = [];
   const text = typeof record === 'string' ? record : '';

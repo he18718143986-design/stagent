@@ -6,6 +6,7 @@ import { ERROR_TYPE_INVARIANT_VIOLATION } from '../WorkflowStageErrorHelpers';
 import { getStagentConfiguration } from '../settings/getStagentConfiguration';
 import { readBehaviorSpecLintMode } from '../settings/SettingsReaders';
 import { validateBehaviorSpecForSemantic } from '../commitment/behaviorSpecSchema';
+import { configYamlFromDecideOutputs } from '../commitment/resolveArchitectureConfigYaml';
 import { coerceDecisionArtifacts } from '../python-contract/ModuleContractLint';
 import {
   GLOBAL_ARCHITECTURE_DECIDE_STAGE_ID,
@@ -94,6 +95,50 @@ export function evaluateApproveBehaviorSpecOrReject(
     formatDecisionRejectionError(
       'behavior-spec',
       `behaviorSpec 硬校验未通过：${violations.map((v) => v.message).join('；')}。请按 system 中 BEHAVIOR_SPEC 要求在 decisionArtifacts.behaviorSpec 输出机读行为规格（functions[].conditions[].id + edge_rules）。`,
+    ),
+    ERROR_TYPE_INVARIANT_VIOLATION,
+  );
+  return false;
+}
+
+const WRITE_CONFIG_STAGE_ID = 'stage_write_config';
+
+/**
+ * T4 Run #70 根治：全局架构决策须产出 config.yaml 正文（下游 stage_write_config 依赖
+ * sourceOutputKey=configContent）。LLM 偶发漏出 → 交付前一刻才 `file-write empty content`
+ * 失败（浪费整轮 ~30min）。改为在批准架构决策时就硬校验：缺正文 → 拒绝并触发 decide
+ * 重试链（与散文 lint / behaviorSpec 同路径，错误面统一携带 marker，AFK 可重试）。
+ * 仅当计划含 stage_write_config 时生效；返回 true 表示放行。
+ */
+export function evaluateApproveArchitectureConfigOrReject(
+  host: HitlStateHost & HitlUiHost & HitlDiagnosticsHost,
+  panel: vscode.WebviewPanel,
+  stageId: string,
+  definition: WorkflowDefinition,
+  decideOutputs: Record<string, unknown>,
+): boolean {
+  if (stageId !== GLOBAL_ARCHITECTURE_DECIDE_STAGE_ID) {
+    return true;
+  }
+  const planNeedsConfig = definition.stages.some((s) => s.id === WRITE_CONFIG_STAGE_ID);
+  if (!planNeedsConfig) {
+    return true;
+  }
+  const content = configYamlFromDecideOutputs(decideOutputs);
+  if (content && content.trim()) {
+    return true;
+  }
+  host.logUserAction('approve_decision_rejected', {
+    stageId,
+    violationCodes: ['missing-config-content'],
+  });
+  postHitlStageError(
+    host,
+    panel,
+    stageId,
+    formatDecisionRejectionError(
+      'arch-config',
+      '全局架构决策缺少 config.yaml 正文：decisionArtifacts.files 须含 {key:"configContent", path:"config.yaml", content:<完整 YAML>}，否则下游 stage_write_config 会以空内容失败。',
     ),
     ERROR_TYPE_INVARIANT_VIOLATION,
   );

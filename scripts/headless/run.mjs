@@ -36,6 +36,7 @@ import {
   WorkflowEngine,
   buildDecisionLintRetryUserComment,
   buildBehaviorSpecRetryUserComment,
+  buildArchitectureConfigRetryUserComment,
   isDecisionLintRejectedError,
   decisionRejectionKindFromError,
 } from '@stagent/core'
@@ -206,12 +207,18 @@ const MAX_DECISION_LINT_RETRIES = 2
 
 const DECISION_LINT_RETRY_COMMENT = buildDecisionLintRetryUserComment()
 const BEHAVIOR_SPEC_RETRY_COMMENT = buildBehaviorSpecRetryUserComment()
+const ARCH_CONFIG_RETRY_COMMENT = buildArchitectureConfigRetryUserComment()
 
-/** 决策拒绝按 kind 选重试反馈：behaviorSpec 拒绝必须补机读行为规格，而非 I-17 章节。 */
+/** 决策拒绝按 kind 选重试反馈：补行为规格 / 补 config.yaml / 补 I-17 章节。 */
 function decisionRetryCommentForError(error) {
-  return decisionRejectionKindFromError(error) === 'behavior-spec'
-    ? BEHAVIOR_SPEC_RETRY_COMMENT
-    : DECISION_LINT_RETRY_COMMENT
+  switch (decisionRejectionKindFromError(error)) {
+    case 'behavior-spec':
+      return BEHAVIOR_SPEC_RETRY_COMMENT
+    case 'arch-config':
+      return ARCH_CONFIG_RETRY_COMMENT
+    default:
+      return DECISION_LINT_RETRY_COMMENT
+  }
 }
 
 /**

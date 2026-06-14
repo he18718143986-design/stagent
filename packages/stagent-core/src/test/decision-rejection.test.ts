@@ -12,10 +12,12 @@ import {
   decisionRejectionKindFromError,
 } from '../hitl/DecisionRejection';
 import {
+  evaluateApproveArchitectureConfigOrReject,
   evaluateApproveBehaviorSpecOrReject,
   evaluateApproveDecisionLintOrReject,
 } from '../hitl/DecisionLintGate';
 import { decideStageIdFromSemanticName } from '../workflow/StageIdPatterns';
+import { GLOBAL_ARCHITECTURE_DECIDE_STAGE_ID } from '../workflow/StageIdPatterns';
 import { DECISION_ARTIFACTS_OUTPUT_KEY } from '../WorkflowOutputKeys';
 import type { WorkflowDefinition } from '../WorkflowDefinition';
 
@@ -88,6 +90,58 @@ test('behaviorSpec 拒绝：发出可被 AFK 检测的 stageError（Run #66 根�
   assert.equal(isDecisionLintRejectedError(errors[0]), true);
   assert.equal(decisionRejectionKindFromError(errors[0]), 'behavior-spec');
   assert.match(errors[0]!, /behaviorSpec/);
+});
+
+function defWithWriteConfig(): WorkflowDefinition {
+  return { stages: [{ id: 'stage_write_config' }] } as unknown as WorkflowDefinition;
+}
+
+test('架构决策缺 config.yaml 正文 → 拒绝（kind = arch-config，Run #70 根因回归）', () => {
+  const { host, errors } = makeHitlHost();
+  const ok = evaluateApproveArchitectureConfigOrReject(
+    host,
+    {} as never,
+    GLOBAL_ARCHITECTURE_DECIDE_STAGE_ID,
+    defWithWriteConfig(),
+    {}, // 无 configContent / 无 decisionArtifacts.files → 触发拒绝
+  );
+  assert.equal(ok, false);
+  assert.equal(errors.length, 1);
+  assert.equal(isDecisionLintRejectedError(errors[0]), true);
+  assert.equal(decisionRejectionKindFromError(errors[0]), 'arch-config');
+});
+
+test('架构决策含 configContent → 放行；无 write_config 计划 → 放行', () => {
+  const { host: h1 } = makeHitlHost();
+  assert.equal(
+    evaluateApproveArchitectureConfigOrReject(h1, {} as never, GLOBAL_ARCHITECTURE_DECIDE_STAGE_ID, defWithWriteConfig(), {
+      configContent: 'broker:\n  simulated: true\n',
+    }),
+    true,
+  );
+  // 含 decisionArtifacts.files 的 yaml 也放行
+  const { host: h2 } = makeHitlHost();
+  assert.equal(
+    evaluateApproveArchitectureConfigOrReject(h2, {} as never, GLOBAL_ARCHITECTURE_DECIDE_STAGE_ID, defWithWriteConfig(), {
+      [DECISION_ARTIFACTS_OUTPUT_KEY]: {
+        version: 1,
+        files: [{ key: 'configContent', path: 'config.yaml', format: 'yaml', content: 'x: 1' }],
+      },
+    }),
+    true,
+  );
+  // 计划无 stage_write_config → 不要求
+  const { host: h3 } = makeHitlHost();
+  assert.equal(
+    evaluateApproveArchitectureConfigOrReject(
+      h3,
+      {} as never,
+      GLOBAL_ARCHITECTURE_DECIDE_STAGE_ID,
+      { stages: [] } as unknown as WorkflowDefinition,
+      {},
+    ),
+    true,
+  );
 });
 
 test('内容 lint 拒绝：发出可被 AFK 检测的 stageError（kind = content-lint）', () => {

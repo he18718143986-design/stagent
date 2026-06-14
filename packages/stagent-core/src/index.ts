@@ -87,6 +87,7 @@ export type {
 export {
   buildDecisionLintRetryUserComment,
   buildBehaviorSpecRetryUserComment,
+  buildArchitectureConfigRetryUserComment,
 } from './DecisionRecordVerify';
 export {
   DECISION_LINT_REJECTED_MARKER,
