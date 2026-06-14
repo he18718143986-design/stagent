@@ -139,14 +139,20 @@ export function evaluateDecisionContentLintGate(
   };
 }
 
-/** AFK decide 重试注释 SSOT（须与 REQUIRED_SECTIONS 一致；T4 Run #47 误写「背景/问题」导致重试仍拒）。 */
+/**
+ * AFK decide 重试注释 SSOT（须与 REQUIRED_SECTIONS 一致；T4 Run #47 误写「背景/问题」导致重试仍拒）。
+ * 关键：示例标题行必须与 lint 的 titleRegex 完全一致（仅标题文字，行尾无括号说明）——
+ * 否则模型照抄带括号的标题（如 `### AI 无法验证的假设（至少 1 条）`）会持续不匹配、重试耗尽
+ * （T6 平台任务首次暴露：把数量要求写进标题导致正则不匹配）。数量要求改为标题外的单独说明。
+ */
 export function buildDecisionLintRetryUserComment(): string {
   return [
-    '决策记录被内容 lint 拒绝（缺少必需章节）。请重新输出完整结构化 decisionRecord，必须严格包含以下四个 Markdown 三级标题（###）：',
+    '决策记录被内容 lint 拒绝（缺少必需章节）。请重新输出完整结构化 decisionRecord，必须严格包含以下四个 Markdown 三级标题（### 后只跟标题文字本身，标题行不要附加任何括号或数量说明）：',
     '### 职责边界',
     '### 关键设计决策',
-    '### 边界压力测试（至少 2 个顶层列表场景）',
-    '### AI 无法验证的假设（至少 1 条）',
+    '### 边界压力测试',
+    '### AI 无法验证的假设',
+    '内容要求：「边界压力测试」节至少列出 2 个顶层列表场景（- 或数字开头）；「AI 无法验证的假设」节至少列出 1 条。',
     '只输出决策内容本身，不要解释这次重写。',
   ].join('\n');
 }

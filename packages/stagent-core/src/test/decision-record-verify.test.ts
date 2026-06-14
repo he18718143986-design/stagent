@@ -30,6 +30,33 @@ test('buildDecisionLintRetryUserComment lists exact ### headings (Run #47 SSOT)'
   assert.ok(!comment.includes('背景/问题'));
 });
 
+test('重试注释里的 ### 标题必须被 lint 接受（防 T6 括号漂移：标题行不得带括号说明）', () => {
+  const comment = buildDecisionLintRetryUserComment();
+  const headings = comment.split('\n').filter((l) => l.startsWith('### '));
+  assert.equal(headings.length, 4, '应恰好列出 4 个三级标题');
+  // 用重试注释给出的标题原样拼一份最小合规 decisionRecord，喂回 lint。
+  const record = [
+    '## 决策清单：示例',
+    headings[0],
+    '- 负责：X；不负责：Y',
+    headings[1],
+    '- 选 A 不选 B：理由…',
+    headings[2],
+    '- 场景 1：空输入边界',
+    '- 场景 2：超大输入边界',
+    headings[3],
+    '- 假设：第三方接口稳定',
+    '',
+  ].join('\n');
+  const result = verifyDecisionRecord(record);
+  // 若标题带了 `（至少 …）` 等括号，titleRegex 不匹配 → missing-section，模型照抄即永拒。
+  assert.deepEqual(
+    result.violations,
+    [],
+    `重试注释标题必须与 lint titleRegex 完全一致；实际违反：${JSON.stringify(result.violations)}`,
+  );
+});
+
 test('T1: 完整合规决策清单 → ok=true', () => {
   const result = verifyDecisionRecord(COMPLIANT_RECORD);
   assert.equal(result.ok, true);
