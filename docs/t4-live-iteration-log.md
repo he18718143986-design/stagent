@@ -13,6 +13,35 @@
 
 ---
 
+## 运行 #72 — 2026-06-14（稳定性轮次 run9：decide→pro 后 decide 全清，broker 行为收敛耗尽 + 超时 ❌）
+
+| 字段 | 值 |
+|------|-----|
+| 命令 | `feedback:live:t4`（全新工作区 `/tmp/t4-acc/run9`，无 `--resume`） |
+| 耗时 | ~54min（trace 3262s；44 calls；in 276223 / out 217748 tok） |
+| headless 判定 | **FAIL** `fix chain exhausted @ stage_fix_if_failed_broker` + `timeout 2400000ms` |
+
+### 里程碑（#71 decide→pro 验证 ✅）
+
+- **decide 阶段 0 次拒绝**（pro 稳定产 I-17 四节 + behaviorSpec + configContent）——#66A/#70/#71 共因已消。
+- indicators ✅、signals ✅、risk ✅ test_run 全绿（含三级 replan 自愈）；broker 进入 fix/testfix 收敛。
+
+### RCA（行为收敛天花板 + 时长，非确定性引擎缺陷）
+
+broker pytest 反复红，fix→replan_fix→replan_testfix 三级链耗尽仍未收敛 → `blockDeliveryOnTestFailure`；同时 pro 模型逐调用慢 + 重度 churn 使整轮越过 40min 超时。这是**模型行为收敛能力边界**（量化策略语义），fix/replan 链按设计运转但模型未在预算内收敛——与 2026-06-13 决策记录预判一致，非主干缺陷。
+
+### 判定（不再加引擎机制；属验收靶子/模型层）
+
+| 维度 | 结论 |
+|------|------|
+| 确定性引擎缺陷 | 本阶段 6 项已根治（#66A behaviorSpec 挂死 / #66B 库名噪声 / #67 typing 噪声 / #68 瞬态重试 / self-shadow gate / #70 arch-config gate）+ #71 decide→pro 路由；decide 链已稳 |
+| 剩余瓶颈 | signals/broker **量化行为语义收敛**（LLM 能力）+ pro 全程导致**单轮时长逼近/超 40min 超时** |
+| 连续 2–3 strict pass | ❌ 仍未达；最佳为单次 #66 ✅ |
+
+**建议（与决策记录 D2/D3/D4 一致）**：①叶子 impl/fix 维持 flash（快）、仅 decide/test-write/集成用 pro，避免全程 pro 的时长爆炸（本轮即栽在时长）；②对 signals/broker 量化语义设独立专项验收，不与平台正确性绑定；③平台 strict 及格线改用确定性多切片任务（数据管道/CRUD/状态机）——若其稳定连过即证架构 OK、量化语义卡的是模型，而非重写架构。
+
+---
+
 ## 运行 #71 — 2026-06-14（稳定性轮次 run8：arch-config gate 早拦生效 ✅，broker decide I-17 缺节耗尽 ❌）
 
 | 字段 | 值 |
