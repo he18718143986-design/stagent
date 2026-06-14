@@ -66,6 +66,23 @@ export function extractModuleLevelConstants(content: string): Set<string> {
   return symbols;
 }
 
+/**
+ * 顶层 `from X import name`（含 `as` 别名）引入的名字——这些名字可被 `from 本模块 import name`
+ * 再次导入（Python re-export 语义）。集成切片 main 常 `from pipeline import import_tasks_from_csv`
+ * 后对外暴露；这类 re-export 是合法导出表面，应计入「契约/import 缺失」判定。
+ */
+export function extractImportedNames(content: string): Set<string> {
+  const names = new Set<string>();
+  for (const imp of parsePythonFromImports(content)) {
+    for (const n of imp.names) {
+      if (n && n !== '*') {
+        names.add(n);
+      }
+    }
+  }
+  return names;
+}
+
 export function extractExportedSymbols(content: string): Set<string> {
   const symbols = new Set<string>();
   MODULE_CLASS_DEF_RE.lastIndex = 0;
@@ -118,8 +135,9 @@ export function lintPythonExportContractOnDisk(params: {
       const implContent = fs.readFileSync(implPath, 'utf8');
       const exported = extractExportedSymbols(implContent);
       const constants = extractModuleLevelConstants(implContent);
+      const reexports = extractImportedNames(implContent);
       for (const name of imp.names) {
-        if (name === '*' || exported.has(name) || constants.has(name)) {
+        if (name === '*' || exported.has(name) || constants.has(name) || reexports.has(name)) {
           continue;
         }
         const key = `${rel}:${imp.module}:${name}`;
@@ -161,13 +179,14 @@ export function lintPythonExportContractFromPaths(
     const implContent = readFile(implPath);
     const exported = extractExportedSymbols(implContent);
     const constants = extractModuleLevelConstants(implContent);
+    const reexports = extractImportedNames(implContent);
     const mod = moduleNameFromImplPath(implPath);
     for (const imp of parsePythonFromImports(testContent)) {
       if (imp.module !== mod) {
         continue;
       }
       for (const name of imp.names) {
-        if (name === '*' || exported.has(name) || constants.has(name)) {
+        if (name === '*' || exported.has(name) || constants.has(name) || reexports.has(name)) {
           continue;
         }
         const key = `${testPath}:${name}`;

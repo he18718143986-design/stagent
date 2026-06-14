@@ -9,6 +9,7 @@ import type { WorkflowInstance } from '../WorkflowDefinition';
 import {
   extractExportedSymbols,
   extractModuleLevelConstants,
+  extractImportedNames,
   parsePythonFromImports,
 } from './PythonExportContractLint';
 import { isExternalPythonModuleRoot } from './pythonExternalModules';
@@ -263,9 +264,14 @@ export function lintImplExportsAgainstModuleContract(params: {
   }
   const content = fs.readFileSync(abs, 'utf8');
   const exported = extractExportedSymbols(content);
-  // 模块顶层常量（ALLOWED_TRANSITIONS 等）同样可被 import，是契约导出的合法落点；
-  // 计入「缺失」判定的可见表面，但不参与下方 export-extra（避免内部常量被误判多余）。
-  const importable = new Set([...exported, ...extractModuleLevelConstants(content)]);
+  // 可被 `from 本模块 import X` 导入的完整表面：顶层 def/class/__all__ + 顶层常量
+  // （ALLOWED_TRANSITIONS）+ 顶层 from-import re-export（main `from pipeline import …` 后转出）。
+  // 仅用于「缺失」判定；下方 export-extra 仍只看 def/class，内部常量/re-export 不误判多余。
+  const importable = new Set([
+    ...exported,
+    ...extractModuleLevelConstants(content),
+    ...extractImportedNames(content),
+  ]);
   const contractSet = new Set(exports);
   const sliceEntry = sliceArtifacts?.modules?.find((m) => m.name === semantic);
   const contractSource =

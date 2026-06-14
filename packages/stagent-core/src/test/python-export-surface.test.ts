@@ -7,6 +7,7 @@ import { lintImplExportsAgainstModuleContract } from '../python-contract/ModuleC
 import {
   extractExportedSymbols,
   extractModuleLevelConstants,
+  extractImportedNames,
   lintPythonExportContractFromPaths,
 } from '../python-contract/PythonExportContractLint';
 
@@ -156,6 +157,55 @@ test('lintPythonExportContractFromPaths accepts test importing module-level cons
   const issues = lintPythonExportContractFromPaths(
     [{ testPath: 'tests/test_statemachine.py', implPath: 'statemachine/__init__.py' }],
     (p) => (p.includes('test_') ? testPy : impl),
+  );
+  assert.equal(issues.length, 0);
+});
+
+const MAIN_REEXPORT_IMPL = `import sys
+import json
+import yaml
+
+from store import TaskStore
+from pipeline import import_tasks_from_csv, summarize
+
+
+def main(config_path: str = "config.yaml") -> None:
+    store = TaskStore()
+    import_tasks_from_csv(config_path, store)
+    print(json.dumps(summarize(store)))
+`;
+
+test('extractImportedNames detects from-import re-export names', () => {
+  const names = extractImportedNames(MAIN_REEXPORT_IMPL);
+  assert.equal(names.has('import_tasks_from_csv'), true);
+  assert.equal(names.has('summarize'), true);
+  assert.equal(names.has('TaskStore'), true);
+});
+
+test('lintImplExportsAgainstModuleContract accepts integration slice re-exporting downstream symbol (T6 main)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'export-surface-reexport-'));
+  fs.writeFileSync(path.join(dir, 'main.py'), MAIN_REEXPORT_IMPL);
+  const artifacts = {
+    version: 1 as const,
+    files: [],
+    // main 决策把它编排/转出的 pipeline 符号也列进了 exports（LLM 合成常见）。
+    modules: [{ name: 'main', exports: ['main', 'import_tasks_from_csv', 'summarize'] }],
+  };
+  const issue = lintImplExportsAgainstModuleContract({
+    workspaceRoot: dir,
+    implRelPath: 'main.py',
+    semantic: 'main',
+    sliceArtifacts: artifacts,
+    globalArtifacts: null,
+  });
+  assert.equal(issue, null);
+});
+
+test('lintPythonExportContractFromPaths accepts test importing a re-exported name from main', () => {
+  const testPy = 'from main import import_tasks_from_csv\n';
+  const issues = lintPythonExportContractFromPaths(
+    [{ testPath: 'tests/test_main.py', implPath: 'main.py' }],
+    (p) => (p.includes('test_') ? testPy : MAIN_REEXPORT_IMPL),
   );
   assert.equal(issues.length, 0);
 });
