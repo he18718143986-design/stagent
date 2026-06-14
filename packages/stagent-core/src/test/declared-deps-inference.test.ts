@@ -14,7 +14,15 @@ import {
   toPipInstallableDependencies,
 } from '../commitment/decisionArtifactsSchema';
 import { lintDeclaredDependenciesInFiles } from '../python-contract/PythonDeclaredDependenciesLint';
+import { isPythonStdlibRoot } from '../python-contract/pythonStdlibRoots';
 import { DECISION_ARTIFACTS_OUTPUT_KEY } from '../WorkflowOutputKeys';
+
+test('isPythonStdlibRoot 覆盖 builtins/operator 等常用 stdlib（T6 run：import builtins 不应判未声明依赖）', () => {
+  for (const m of ['builtins', 'operator', 'textwrap', 'statistics', 'base64', 'csv', 'json']) {
+    assert.equal(isPythonStdlibRoot(m), true, `${m} 应识别为 stdlib`);
+  }
+  assert.equal(isPythonStdlibRoot('pandas'), false);
+});
 
 test('inferImplicitDependenciesFromArtifacts：config.yaml → 仅 pyyaml（非 pip 包名 yaml）', () => {
   const deps = inferImplicitDependenciesFromArtifacts({
