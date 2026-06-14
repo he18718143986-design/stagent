@@ -13,17 +13,21 @@ export interface PythonExportContractIssue {
 }
 
 const FROM_IMPORT_RE = /^\s*from\s+([a-zA-Z_][\w.]*)\s+import\s+([^\n#]+)/gm;
+const TOP_LEVEL_FROM_IMPORT_RE = /^from\s+([a-zA-Z_][\w.]*)\s+import\s+([^\n#]+)/gm;
 /** 模块顶层 class（行首无缩进）— 与 `from mod import name` 可 import 表面对齐 */
 const MODULE_CLASS_DEF_RE = /^class\s+([A-Za-z_]\w*)/gm;
 /** 模块顶层 def（行首无缩进）；嵌套 helper 不计入 export 表面 */
 const MODULE_DEF_RE = /^def\s+([A-Za-z_]\w*)/gm;
 const ALL_RE = /__all__\s*=\s*\[([^\]]+)\]/;
 
-export function parsePythonFromImports(content: string): Array<{ module: string; names: string[] }> {
+function parsePythonFromImportsWithRegex(
+  content: string,
+  fromImportRe: RegExp,
+): Array<{ module: string; names: string[] }> {
   const results: Array<{ module: string; names: string[] }> = [];
-  FROM_IMPORT_RE.lastIndex = 0;
+  fromImportRe.lastIndex = 0;
   let m: RegExpExecArray | null;
-  while ((m = FROM_IMPORT_RE.exec(content)) !== null) {
+  while ((m = fromImportRe.exec(content)) !== null) {
     const mod = m[1]!;
     if (mod.startsWith('.')) {
       continue;
@@ -44,6 +48,10 @@ export function parsePythonFromImports(content: string): Array<{ module: string;
     }
   }
   return results;
+}
+
+export function parsePythonFromImports(content: string): Array<{ module: string; names: string[] }> {
+  return parsePythonFromImportsWithRegex(content, FROM_IMPORT_RE);
 }
 
 /**
@@ -73,7 +81,7 @@ export function extractModuleLevelConstants(content: string): Set<string> {
  */
 export function extractImportedNames(content: string): Set<string> {
   const names = new Set<string>();
-  for (const imp of parsePythonFromImports(content)) {
+  for (const imp of parsePythonFromImportsWithRegex(content, TOP_LEVEL_FROM_IMPORT_RE)) {
     for (const n of imp.names) {
       if (n && n !== '*') {
         names.add(n);

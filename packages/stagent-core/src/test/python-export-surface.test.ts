@@ -182,6 +182,16 @@ test('extractImportedNames detects from-import re-export names', () => {
   assert.equal(names.has('TaskStore'), true);
 });
 
+test('extractImportedNames ignores function-local imports', () => {
+  const names = extractImportedNames(`import json
+
+def main():
+    from pipeline import summarize
+    return summarize([])
+`);
+  assert.equal(names.has('summarize'), false);
+});
+
 test('lintImplExportsAgainstModuleContract accepts integration slice re-exporting downstream symbol (T6 main)', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'export-surface-reexport-'));
   fs.writeFileSync(path.join(dir, 'main.py'), MAIN_REEXPORT_IMPL);
@@ -242,6 +252,20 @@ test('lintPythonExportContractFromPaths accepts test importing a re-exported nam
     (p) => (p.includes('test_') ? testPy : MAIN_REEXPORT_IMPL),
   );
   assert.equal(issues.length, 0);
+});
+
+test('lintPythonExportContractFromPaths rejects local-only imports as main re-exports', () => {
+  const impl = `def main():
+    from pipeline import summarize
+    return summarize([])
+`;
+  const testPy = 'from main import summarize\n';
+  const issues = lintPythonExportContractFromPaths(
+    [{ testPath: 'tests/test_main.py', implPath: 'main.py' }],
+    (p) => (p.includes('test_') ? testPy : impl),
+  );
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0]?.symbol, 'summarize');
 });
 
 test('lintPythonExportContractFromPaths resolves package module from __init__.py（Run #61）', () => {

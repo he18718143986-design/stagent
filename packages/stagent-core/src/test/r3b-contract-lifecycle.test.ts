@@ -11,7 +11,11 @@ import {
   GATE_ID_PYTHON_DECLARED_DEPS_POST_MUTATE,
 } from '../QualityGateIds';
 import { DECISION_ARTIFACTS_OUTPUT_KEY } from '../WorkflowOutputKeys';
-import { implStageIdFromSemanticName, testWriteStageIdFromSemanticName } from '../workflow/StageIdPatterns';
+import {
+  decideStageIdFromSemanticName,
+  implStageIdFromSemanticName,
+  testWriteStageIdFromSemanticName,
+} from '../workflow/StageIdPatterns';
 import { mergeDeclaredDependenciesIntoRequirements } from '../python-contract/requirementsMerge';
 
 const postMutateGate = BUILTIN_POST_STAGE_GATES.find((g) => g.id === GATE_ID_MODULE_CONTRACT_POST_MUTATE)!;
@@ -123,6 +127,93 @@ function makeFixGateCtx(opts: {
   };
 }
 
+function llmWriteStage(id: string, filePath: string): Stage {
+  return {
+    id,
+    title: id,
+    tool: 'llm-text',
+    toolConfig: {
+      type: 'llm-text',
+      systemPrompt: id,
+      writeOutputToFile: filePath,
+      writePathBase: 'workspace',
+    },
+    input: { sources: [], mergeStrategy: 'concat' },
+    outputs: [{ key: 'code', format: 'text' }],
+    pauseAfter: false,
+  };
+}
+
+function makePostMutateModuleCtx(opts: {
+  semantic: string;
+  implBody: string;
+  moduleExports: string[];
+  testImportSymbol: string;
+  otherModules: Array<{ name: string; exports: string[] }>;
+}): QualityGateContext {
+  const implPath = `${opts.semantic}.py`;
+  const testPath = `tests/test_${opts.semantic}.py`;
+  const implStage = llmWriteStage(implStageIdFromSemanticName(opts.semantic), implPath);
+  const testStage = llmWriteStage(testWriteStageIdFromSemanticName(opts.semantic), testPath);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'r3b-cross-slice-'));
+  fs.mkdirSync(path.join(dir, 'tests'), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, testPath),
+    `from ${opts.semantic} import ${opts.testImportSymbol}\n\ndef test_contract():\n    assert ${opts.testImportSymbol} is not None\n`,
+  );
+  fs.writeFileSync(path.join(dir, implPath), opts.implBody);
+
+  const stageRuntimes = [
+    {
+      stageId: decideStageIdFromSemanticName(opts.semantic),
+      status: 'done' as const,
+      outputs: {
+        [DECISION_ARTIFACTS_OUTPUT_KEY]: {
+          version: 1 as const,
+          files: [],
+          modules: [{ name: opts.semantic, exports: opts.moduleExports }],
+        },
+      },
+      retryCount: 0,
+    },
+    ...opts.otherModules.map((m) => ({
+      stageId: decideStageIdFromSemanticName(m.name),
+      status: 'done' as const,
+      outputs: {
+        [DECISION_ARTIFACTS_OUTPUT_KEY]: {
+          version: 1 as const,
+          files: [],
+          modules: [m],
+        },
+      },
+      retryCount: 0,
+    })),
+  ];
+
+  return {
+    phase: 'post-stage',
+    stage: implStage,
+    instance: {
+      status: 'running',
+      definition: {
+        id: 'wf-cross-slice',
+        version: '2.0',
+        meta: { title: 't', taskType: 'software', userInput: 'u', createdAt: new Date().toISOString() },
+        stages: [testStage, implStage],
+      },
+      stageRuntimes,
+      currentStageIndex: 0,
+    } satisfies WorkflowInstance,
+    taskWorkspaceAbs: dir,
+    executionHost: {
+      readPythonModuleContractLintMode: () => 'hard',
+      readPythonExportContractLintMode: () => 'hard',
+      readPythonPypiSymbolLintMode: () => 'hard',
+      getWorkspaceRootAbsolute: () => dir,
+    } as never,
+  };
+}
+
 test('post-fix module-contract blocks wrong export name', () => {
   const ctx = makeFixGateCtx({
     implBody: 'def indicators_ma():\n    return 1\n',
@@ -145,6 +236,32 @@ test('post-fix declared-deps blocks talib import', () => {
   assert.ok(result);
   assert.equal(result!.severity, 'block');
   assert.match(result!.messages.join(' '), /talib/);
+});
+
+test('post-mutate module-contract lets main omit downstream module-name exports', () => {
+  const ctx = makePostMutateModuleCtx({
+    semantic: 'main',
+    implBody: 'def main():\n    return None\n',
+    moduleExports: ['main', 'store'],
+    testImportSymbol: 'main',
+    otherModules: [{ name: 'store', exports: ['TaskStore'] }],
+  });
+  const result = evalSync(postMutateGate, ctx);
+  assert.equal(result, null);
+});
+
+test('post-mutate module-contract does not exempt downstream module names for non-main slices', () => {
+  const ctx = makePostMutateModuleCtx({
+    semantic: 'store',
+    implBody: 'class TaskStore:\n    pass\n',
+    moduleExports: ['TaskStore', 'pipeline'],
+    testImportSymbol: 'TaskStore',
+    otherModules: [{ name: 'pipeline', exports: ['run_pipeline'] }],
+  });
+  const result = evalSync(postMutateGate, ctx);
+  assert.ok(result);
+  assert.equal(result!.severity, 'block');
+  assert.equal((result!.meta as { issue?: { symbol?: string } } | undefined)?.issue?.symbol, 'pipeline');
 });
 
 test('mergeDeclaredDependenciesIntoRequirements is idempotent', () => {
